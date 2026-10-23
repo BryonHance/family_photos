@@ -1,0 +1,13 @@
+[workspace]
+authors = ["Bryon Hance <bryon.hance@gmail.com>"]
+channels = ["conda-forge"]
+name = "family_photos"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+pnpm = ">=12.4.1,<13"
+typescript = ">=6.0.2,<7"
+nodejs = ">=26.12.1,<26.13"
