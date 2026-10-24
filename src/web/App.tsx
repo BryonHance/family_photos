@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import type { Analysis, AnalyzeError, Field, Section, Summary, Warning } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
@@ -8,6 +8,9 @@ export function App() {
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  // The request for the Photo opened most recently. Opening another aborts it, so
+  // a slower response for an earlier Photo can never replace a later one.
+  const request = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!opened) return;
@@ -15,6 +18,9 @@ export function App() {
   }, [opened]);
 
   async function open(photo: File) {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setOpened(null);
     setError(null);
     setAnalyzing(photo.name);
@@ -22,14 +28,16 @@ export function App() {
       const form = new FormData();
       form.append("photo", photo);
       form.append("lastModified", String(photo.lastModified));
-      const res = await fetch("/api/analyze", { method: "POST", body: form });
+      const res = await fetch("/api/analyze", { method: "POST", body: form, signal: controller.signal });
       const body = (await res.json()) as Analysis | AnalyzeError;
+      if (controller.signal.aborted) return;
       if ("error" in body) setError(body.error.message);
       else setOpened({ analysis: body, previewUrl: URL.createObjectURL(photo) });
     } catch {
+      if (controller.signal.aborted) return;
       setError("The Photo could not be analyzed. Check the connection to the server and try again.");
     } finally {
-      setAnalyzing(null);
+      if (!controller.signal.aborted) setAnalyzing(null);
     }
   }
 
