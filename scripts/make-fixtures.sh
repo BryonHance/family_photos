@@ -42,3 +42,13 @@ printf '\x00\x01\x00\x10\x00\x04\x00\x00\x00\x01\x80\x00\x04\x53\x00\x00\x00\x00
   -GPSLatitude=37.7749 -GPSLatitudeRef=N -GPSLongitude=122.4194 -GPSLongitudeRef=W \
   -IPTC:Caption-Abstract="Family at the beach" -XMP-dc:Title="Beach day" \
   "$out/every-section.jpg"
+# Stripped of all metadata, as a messaging app would send it.
+magick -size 64x48 gradient:steelblue-orange -strip "$out/no-metadata.jpg"
+
+# Has EXIF (camera Fields) but no Date taken.
+magick -size 64x48 gradient:steelblue-orange -strip "$out/no-date-taken.jpg"
+"$exiftool" -q -overwrite_original -Make="Canon" -Model="Canon EOS R6" "$out/no-date-taken.jpg"
+
+# The full-EXIF JPEG cut off partway through its image data, as an interrupted
+# copy leaves it. Its EXIF still reads.
+head -c 700 "$out/full-exif.jpg" > "$out/truncated.jpg"

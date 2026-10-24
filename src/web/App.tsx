@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type DragEvent } from "react";
-import type { Analysis, AnalyzeError, Field, Section, Summary } from "../shared/analysis.ts";
+import type { Analysis, AnalyzeError, Field, Section, Summary, Warning } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -77,6 +77,7 @@ export function App() {
             {error}
           </p>
         )}
+        {opened && opened.analysis.warnings.length > 0 ? <Warnings warnings={opened.analysis.warnings} /> : null}
         {opened && <SummaryCard summary={opened.analysis.summary} />}
         {opened && (
           <input
@@ -93,6 +94,20 @@ export function App() {
         ))}
       </div>
     </main>
+  );
+}
+
+function Warnings({ warnings }: { warnings: Warning[] }) {
+  const headingId = useId();
+  return (
+    <section className="warnings" aria-labelledby={headingId}>
+      <h2 id={headingId}>Warnings</h2>
+      <ul>
+        {warnings.map((warning) => (
+          <li key={warning.kind}>{warning.message}</li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -37,8 +37,10 @@ export function createApp(config: AppConfig) {
       if (photo.size > config.maxUploadBytes) return tooLarge(c);
 
       const bytes = new Uint8Array(await photo.arrayBuffer());
+      const sentModified = typeof body["lastModified"] === "string" ? Number(body["lastModified"]) : NaN;
+      const lastModified = Number.isFinite(sentModified) ? sentModified : undefined;
       try {
-        return c.json(await analyzePhoto(config, { bytes, name: photo.name }));
+        return c.json(await analyzePhoto(config, { bytes, name: photo.name, lastModified }));
       } catch (error) {
         if (!(error instanceof UnsupportedFileError)) throw error;
         return reject(

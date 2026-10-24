@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
+import { deriveWarnings } from "./warnings.ts";
 
 export type AnalyzerConfig = {
   exiftool: ExifTool;
@@ -10,7 +11,12 @@ export type AnalyzerConfig = {
   tempDir: string;
 };
 
-export type PhotoUpload = { bytes: Uint8Array; name: string };
+export type PhotoUpload = {
+  bytes: Uint8Array;
+  name: string;
+  /** The file's modified time in milliseconds since the epoch, when the browser sent it. */
+  lastModified?: number;
+};
 
 /** The file was read but is not a Photo the viewer supports, such as a PDF or a video. */
 export class UnsupportedFileError extends Error {
@@ -92,7 +98,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: type },
     preview: { kind: "client" },
-    warnings: [],
+    warnings: deriveWarnings(tags, photo.lastModified),
     summary: summarize(tags),
     sections,
   };
