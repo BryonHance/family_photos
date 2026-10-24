@@ -18,3 +18,6 @@ magick -size 64x48 gradient:steelblue-orange -strip "$out/full-exif.jpg"
 # Same image recorded sideways: Orientation 6 means "rotate 90 CW to view".
 magick -size 64x48 gradient:steelblue-orange -strip "$out/rotated.jpg"
 "$exiftool" -q -overwrite_original -Orientation#=6 -Make="Apple" -Model="iPhone 15" "$out/rotated.jpg"
+
+# A one-page PDF: a real file that is not a Photo, for the 415 rejection.
+magick -size 16x16 xc:white "$out/not-a-photo.pdf"

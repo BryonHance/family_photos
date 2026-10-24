@@ -1,10 +1,12 @@
 import { useEffect, useId, useState, type DragEvent } from "react";
-import type { Analysis, Section } from "../shared/analysis.ts";
+import type { Analysis, AnalyzeError, Section } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
 export function App() {
   const [opened, setOpened] = useState<Opened | null>(null);
+  const [analyzing, setAnalyzing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!opened) return;
@@ -12,12 +14,22 @@ export function App() {
   }, [opened]);
 
   async function open(photo: File) {
-    const form = new FormData();
-    form.append("photo", photo);
-    form.append("lastModified", String(photo.lastModified));
-    const res = await fetch("/api/analyze", { method: "POST", body: form });
-    const analysis = (await res.json()) as Analysis;
-    setOpened({ analysis, previewUrl: URL.createObjectURL(photo) });
+    setOpened(null);
+    setError(null);
+    setAnalyzing(photo.name);
+    try {
+      const form = new FormData();
+      form.append("photo", photo);
+      form.append("lastModified", String(photo.lastModified));
+      const res = await fetch("/api/analyze", { method: "POST", body: form });
+      const body = (await res.json()) as Analysis | AnalyzeError;
+      if ("error" in body) setError(body.error.message);
+      else setOpened({ analysis: body, previewUrl: URL.createObjectURL(photo) });
+    } catch {
+      setError("The Photo could not be analyzed. Check the connection to the server and try again.");
+    } finally {
+      setAnalyzing(null);
+    }
   }
 
   function onDrop(event: DragEvent) {
@@ -47,11 +59,23 @@ export function App() {
             onChange={(event) => {
               const photo = event.target.files?.[0];
               if (photo) void open(photo);
+              // Lets the same file be picked again, for example after an error.
+              event.target.value = "";
             }}
           />
         </label>
       </div>
       <div className="panel">
+        {analyzing !== null && (
+          <p className="loading" role="status">
+            Analyzing {analyzing}…
+          </p>
+        )}
+        {error !== null && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
         {opened?.analysis.sections.map((section) => (
           <SectionTable key={section.name} section={section} />
         ))}

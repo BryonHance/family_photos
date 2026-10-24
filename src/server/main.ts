@@ -8,7 +8,9 @@ import { createApp } from "./app.ts";
 const port = Number(process.env.PORT ?? 3000);
 const tempDir = await mkdtemp(join(tmpdir(), "family-photos-"));
 
-serve({ fetch: createApp({ exiftool, tempDir }).fetch, port }, () => {
+const maxUploadBytes = 200 * 1024 * 1024; // 200 MB
+
+serve({ fetch: createApp({ exiftool, tempDir, maxUploadBytes }).fetch, port }, () => {
   console.log(`Analyze API listening on http://localhost:${port}`);
 });
 
