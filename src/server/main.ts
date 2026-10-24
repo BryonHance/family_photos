@@ -11,9 +11,11 @@ const tempDir = await mkdtemp(join(tmpdir(), "family-photos-"));
 // Set in the Docker image. In development Vite serves the UI and proxies /api here.
 const uiDir = process.env.UI_DIR;
 
+const maxUploadBytes = 200 * 1024 * 1024; // 200 MB
+
 const app = uiDir
-  ? createProductionApp({ exiftool, tempDir, uiDir })
-  : createApp({ exiftool, tempDir });
+  ? createProductionApp({ exiftool, tempDir, maxUploadBytes, uiDir })
+  : createApp({ exiftool, tempDir, maxUploadBytes });
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`${uiDir ? "Viewer" : "Analyze API"} listening on http://localhost:${port}`);

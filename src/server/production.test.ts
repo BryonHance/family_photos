@@ -28,7 +28,7 @@ afterAll(async () => {
   await rm(uiDir, { recursive: true, force: true });
 });
 
-const app = () => createProductionApp({ exiftool, tempDir, uiDir });
+const app = () => createProductionApp({ exiftool, tempDir, maxUploadBytes: 1024 * 1024, uiDir });
 
 describe("production server", () => {
   it("serves the UI at the root", async () => {

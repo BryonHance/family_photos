@@ -12,6 +12,16 @@ export type AnalyzerConfig = {
 
 export type PhotoUpload = { bytes: Uint8Array; name: string };
 
+/** The file was read but is not a Photo the viewer supports, such as a PDF or a video. */
+export class UnsupportedFileError extends Error {
+  readonly mimeType: string;
+
+  constructor(mimeType: string) {
+    super(`Not a supported Photo: ${mimeType}`);
+    this.mimeType = mimeType;
+  }
+}
+
 /** One entry of ExifTool's long (`-l`) JSON output. */
 type LongTag = { desc: string; val: string | number; num?: string | number };
 
@@ -29,6 +39,8 @@ const SECTION_ORDER: SectionName[] = ["File", "EXIF", "GPS", "IPTC", "XMP", "ICC
 
 export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): Promise<Analysis> {
   const tags = await readTags(config, photo.bytes);
+  const type = mimeType(tags["File:MIMEType"]);
+  if (!type.startsWith("image/")) throw new UnsupportedFileError(type);
 
   const fieldsBySection = new Map<SectionName, Field[]>();
   for (const [key, value] of Object.entries(tags)) {
@@ -54,7 +66,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
   });
 
   return {
-    photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: mimeType(tags["File:MIMEType"]) },
+    photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: type },
     preview: { kind: "client" },
     warnings: [],
     summary: {},

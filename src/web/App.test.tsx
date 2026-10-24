@@ -72,3 +72,68 @@ it("analyzes a Photo dropped onto the page", async () => {
   expect(body.get("photo")).toBeInstanceOf(File);
   expect(body.get("lastModified")).toBe(String(photo.lastModified));
 });
+
+it.each([
+  [400, "no-photo", "No Photo was sent. Choose a Photo to analyze."],
+  [413, "too-large", "This file is too large. Photos must be 200 MB or smaller."],
+  [415, "unsupported-file", "This file is not a supported Photo (application/pdf). Open a JPEG, PNG, WebP, HEIC, TIFF or RAW Photo."],
+])("shows the server's message when it rejects an upload with %i", async (status, kind, message) => {
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json({ error: { kind, message } }, { status }));
+  render(<App />);
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(screen.queryByRole("img")).not.toBeInTheDocument();
+});
+
+it("shows a loading indicator while the Photo is being analyzed", async () => {
+  let respond!: (res: Response) => void;
+  vi.mocked(fetch).mockReturnValueOnce(new Promise((resolve) => (respond = resolve)));
+  render(<App />);
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+
+  expect(screen.getByRole("status")).toHaveTextContent(/analyzing beach\.jpg/i);
+  respond(Response.json(analysis));
+  expect(await screen.findByRole("region", { name: "EXIF" })).toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("replaces the first Photo when a second one is opened, without a reload", async () => {
+  const second: Analysis = {
+    ...analysis,
+    photo: { name: "garden.jpg", sizeBytes: 2000, mimeType: "image/jpeg" },
+    sections: [{ name: "File", fields: [{ tag: "FileName", label: "File Name", raw: "garden.jpg" }] }],
+  };
+  vi.mocked(fetch)
+    .mockResolvedValueOnce(Response.json(analysis))
+    .mockResolvedValueOnce(Response.json(second));
+  vi.mocked(URL.createObjectURL).mockReturnValueOnce("blob:beach").mockReturnValueOnce("blob:garden");
+  render(<App />);
+  const picker = screen.getByLabelText(/choose a photo/i);
+
+  await userEvent.upload(picker, photo);
+  expect(await screen.findByRole("img", { name: "beach.jpg" })).toBeInTheDocument();
+  await userEvent.upload(picker, new File(["more jpeg bytes"], "garden.jpg", { type: "image/jpeg" }));
+
+  expect(await screen.findByRole("img", { name: "garden.jpg" })).toHaveAttribute("src", "blob:garden");
+  expect(screen.queryByRole("img", { name: "beach.jpg" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "EXIF" })).not.toBeInTheDocument();
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:beach");
+});
+
+it("clears an earlier error once a Photo opens successfully", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce(
+    Response.json({ error: { kind: "too-large", message: "Too large." } }, { status: 413 }),
+  );
+  render(<App />);
+  const picker = screen.getByLabelText(/choose a photo/i);
+
+  await userEvent.upload(picker, photo);
+  await screen.findByRole("alert");
+  await userEvent.upload(picker, photo);
+
+  expect(await screen.findByRole("region", { name: "EXIF" })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

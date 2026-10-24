@@ -21,13 +21,19 @@ afterAll(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-async function post(fixtureName: string) {
-  const app = createApp({ exiftool, tempDir });
+const testUploadLimit = 5_000;
+
+function send(form: FormData, maxUploadBytes = testUploadLimit) {
+  const app = createApp({ exiftool, tempDir, maxUploadBytes });
+  return app.request("/api/analyze", { method: "POST", body: form });
+}
+
+async function post(fixtureName: string, maxUploadBytes?: number) {
   const form = new FormData();
   const bytes = await readFile(fixture(fixtureName));
   form.append("photo", new File([bytes], fixtureName, { type: "image/jpeg" }));
   form.append("lastModified", String(Date.UTC(2024, 6, 4)));
-  return app.request("/api/analyze", { method: "POST", body: form });
+  return send(form, maxUploadBytes);
 }
 
 async function analyze(fixtureName: string) {
@@ -83,5 +89,43 @@ describe("POST /api/analyze", () => {
 
     expect(analysis.preview).toEqual({ kind: "client" });
     expect(analysis.photo).toEqual({ name: "full-exif.jpg", sizeBytes: 1000, mimeType: "image/jpeg" });
+  });
+});
+
+describe("POST /api/analyze rejections", () => {
+  it("rejects a request with no Photo with 400", async () => {
+    const form = new FormData();
+    form.append("lastModified", String(Date.UTC(2024, 6, 4)));
+
+    const res = await send(form);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { kind: "no-photo", message: "No Photo was sent. Choose a Photo to analyze." },
+    });
+    expect(await readdir(tempDir)).toEqual([]);
+  });
+
+  it("rejects a Photo over the upload limit with 413", async () => {
+    const res = await post("full-exif.jpg", 500);
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({
+      error: { kind: "too-large", message: "This file is too large. Photos must be 500 bytes or smaller." },
+    });
+    expect(await readdir(tempDir)).toEqual([]);
+  });
+
+  it("rejects a file that is not a supported Photo with 415", async () => {
+    const res = await post("not-a-photo.pdf");
+
+    expect(res.status).toBe(415);
+    expect(await res.json()).toEqual({
+      error: {
+        kind: "unsupported-file",
+        message: "This file is not a supported Photo (application/pdf). Open a JPEG, PNG, WebP, HEIC, TIFF or RAW Photo.",
+      },
+    });
+    expect(await readdir(tempDir)).toEqual([]);
   });
 });
