@@ -28,16 +28,19 @@ function send(form: FormData, maxUploadBytes = testUploadLimit) {
   return app.request("/api/analyze", { method: "POST", body: form });
 }
 
-async function post(fixtureName: string, maxUploadBytes?: number) {
+async function post(
+  fixtureName: string,
+  { maxUploadBytes, lastModified = Date.UTC(2024, 6, 4) }: { maxUploadBytes?: number; lastModified?: number } = {},
+) {
   const form = new FormData();
   const bytes = await readFile(fixture(fixtureName));
   form.append("photo", new File([bytes], fixtureName, { type: "image/jpeg" }));
-  form.append("lastModified", String(Date.UTC(2024, 6, 4)));
+  form.append("lastModified", String(lastModified));
   return send(form, maxUploadBytes);
 }
 
-async function analyze(fixtureName: string) {
-  const res = await post(fixtureName);
+async function analyze(fixtureName: string, lastModified?: number) {
+  const res = await post(fixtureName, { lastModified });
   expect(res.status).toBe(200);
   return (await res.json()) as Analysis;
 }
@@ -150,7 +153,7 @@ describe("POST /api/analyze rejections", () => {
   });
 
   it("rejects a Photo over the upload limit with 413", async () => {
-    const res = await post("full-exif.jpg", 500);
+    const res = await post("full-exif.jpg", { maxUploadBytes: 500 });
 
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({
@@ -191,5 +194,52 @@ describe("Summary", () => {
     const { summary } = await analyze("no-location.jpg");
 
     expect(summary).toEqual({ dateTaken: "2023:12:25 09:15:00", camera: "Google Pixel 8" });
+  });
+});
+
+describe("Warnings", () => {
+  const kinds = (analysis: Analysis) => analysis.warnings.map((w) => w.kind);
+
+  it("warns of No metadata when a Photo has no EXIF, IPTC or XMP", async () => {
+    const analysis = await analyze("no-metadata.jpg");
+
+    expect(kinds(analysis)).toEqual(["no-metadata"]);
+    expect(analysis.warnings[0]?.message).toMatch(/stripped/i);
+  });
+
+  it("warns of No Date taken when a Photo has metadata but no Date taken", async () => {
+    const analysis = await analyze("no-date-taken.jpg");
+
+    expect(kinds(analysis)).toEqual(["no-date-taken"]);
+  });
+
+  // full-exif.jpg was taken at 2024-07-04 18:30:00-07:00, which is 01:30 UTC on 5 July.
+  const takenAt = Date.UTC(2024, 6, 5, 1, 30);
+  const hours = (n: number) => n * 60 * 60 * 1000;
+
+  it("returns no Warnings for a healthy Photo", async () => {
+    expect((await analyze("full-exif.jpg", takenAt)).warnings).toEqual([]);
+  });
+
+  it("warns of a Date mismatch when the modified time is more than 24 hours from the Date taken", async () => {
+    expect(kinds(await analyze("full-exif.jpg", takenAt + hours(25)))).toEqual(["date-mismatch"]);
+    expect(kinds(await analyze("full-exif.jpg", takenAt - hours(25)))).toEqual(["date-mismatch"]);
+  });
+
+  it("does not warn of a Date mismatch within 24 hours of the Date taken", async () => {
+    expect(kinds(await analyze("full-exif.jpg", takenAt + hours(23)))).toEqual([]);
+    expect(kinds(await analyze("full-exif.jpg", takenAt - hours(23)))).toEqual([]);
+  });
+
+  it("warns of a Damaged file for a truncated JPEG and still returns the Sections it could read", async () => {
+    const analysis = await analyze("truncated.jpg", takenAt);
+
+    expect(kinds(analysis)).toEqual(["damaged-file"]);
+    expect(section(analysis, "EXIF")?.fields).toContainEqual({ tag: "Make", label: "Make", raw: "Canon" });
+    expect(section(analysis, "File")?.fields).toContainEqual({ tag: "MIMEType", label: "MIME Type", raw: "image/jpeg" });
+  });
+
+  it("skips the Date mismatch check when there is no Date taken", async () => {
+    expect(kinds(await analyze("no-date-taken.jpg", Date.UTC(2001, 0, 1)))).toEqual(["no-date-taken"]);
   });
 });

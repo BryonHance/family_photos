@@ -260,3 +260,33 @@ it("reveals a Field's exact Tag name when its label is hovered", async () => {
   expect(label).toHaveAttribute("title", "ExposureTime");
   expect(screen.getByTitle("CanonModelID")).toHaveTextContent("Canon Model ID");
 });
+
+it("shows Warnings first in the panel, above the Summary and Sections", async () => {
+  const warned: Analysis = {
+    ...analysis,
+    warnings: [
+      { kind: "no-date-taken", message: "This Photo has no Date taken." },
+      { kind: "damaged-file", message: "This Photo looks damaged." },
+    ],
+  };
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json(warned));
+  render(<App />);
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+
+  const warnings = await screen.findByRole("region", { name: /warnings/i });
+  expect(within(warnings).getByText("This Photo has no Date taken.")).toBeInTheDocument();
+  expect(within(warnings).getByText("This Photo looks damaged.")).toBeInTheDocument();
+  const [first, ...rest] = screen.getAllByRole("region");
+  expect(first).toBe(warnings);
+  expect(rest.length).toBeGreaterThan(0);
+});
+
+it("shows no Warnings area when a Photo has no Warnings", async () => {
+  render(<App />);
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+
+  await screen.findByRole("region", { name: "EXIF" });
+  expect(screen.queryByRole("region", { name: /warnings/i })).not.toBeInTheDocument();
+});
