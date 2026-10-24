@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Field, Section, SectionName } from "../shared/analysis.ts";
+import { previewFor } from "./preview.ts";
 
 export type AnalyzerConfig = {
   exiftool: ExifTool;
@@ -53,9 +54,10 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     return fields ? [{ name, fields }] : [];
   });
 
+  const photoMimeType = mimeType(tags["File:MIMEType"]);
   return {
-    photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: mimeType(tags["File:MIMEType"]) },
-    preview: { kind: "client" },
+    photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: photoMimeType },
+    preview: await previewFor(photoMimeType, photo.bytes),
     warnings: [],
     summary: {},
     sections,
