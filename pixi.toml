@@ -6,6 +6,11 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+install = "pnpm install --frozen-lockfile"
+dev = { cmd = "pnpm run dev", depends-on = ["install"] }
+test = { cmd = "pnpm run test", depends-on = ["install"] }
+typecheck = { cmd = "pnpm run typecheck", depends-on = ["install"] }
+build = { cmd = "pnpm run build", depends-on = ["install"] }
 
 [dependencies]
 pnpm = ">=12.4.1,<13"

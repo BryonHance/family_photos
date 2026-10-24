@@ -18,6 +18,10 @@ _Avoid_: Category, group, block, tag group
 One named piece of metadata within a Section, such as exposure time or caption.
 _Avoid_: Tag, property, attribute, key
 
+**Tag name**:
+ExifTool's exact identifier for a Field, such as "ExposureTime", as opposed to the Field's readable label.
+_Avoid_: Key, field ID
+
 **Raw value**:
 A Field's value exactly as stored in the Photo.
 _Avoid_: Original value, source value
@@ -37,7 +41,7 @@ When the shutter fired, as recorded by the camera, as opposed to when the file w
 _Avoid_: Capture date, timestamp, creation date
 
 **Summary**:
-A short overview of a Photo derived from its Fields: Date taken, camera and lens, and exposure.
+A short overview of a Photo derived from its Fields: Date taken and its timezone, camera and lens, exposure, and location.
 _Avoid_: Overview, highlights, info card
 
 **Warning**:
