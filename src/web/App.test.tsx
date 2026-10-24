@@ -195,3 +195,68 @@ it("offers no OpenStreetMap link when the Photo has no location", async () => {
 
   expect(within(summary).queryByRole("link", { name: /openstreetmap/i })).not.toBeInTheDocument();
 });
+
+const everySection: Analysis = {
+  ...analysis,
+  sections: [
+    ...analysis.sections,
+    { name: "GPS", fields: [{ tag: "GPSLatitudeRef", label: "GPS Latitude Ref", raw: "N", display: "North" }] },
+    {
+      name: "Maker notes",
+      fields: [{ tag: "CanonModelID", label: "Canon Model ID", raw: 2147484755, display: "EOS R6" }],
+    },
+  ],
+};
+
+async function openPhoto(response: Analysis) {
+  vi.mocked(fetch).mockImplementation(async () => Response.json(response));
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  await screen.findByRole("region", { name: "File" });
+}
+
+it("collapses and expands a Section", async () => {
+  await openPhoto(everySection);
+  const gps = screen.getByRole("region", { name: "GPS" });
+  const toggle = within(gps).getByRole("button", { name: "GPS" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(within(gps).getByText("North")).toBeVisible();
+
+  await userEvent.click(toggle);
+
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(within(gps).getByText("North")).not.toBeVisible();
+
+  await userEvent.click(toggle);
+
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(within(gps).getByText("North")).toBeVisible();
+});
+
+it("starts every Section expanded except Maker notes, which expands on click", async () => {
+  await openPhoto(everySection);
+
+  for (const name of ["File", "EXIF", "GPS"]) {
+    const region = screen.getByRole("region", { name });
+    expect(within(region).getByRole("button", { name })).toHaveAttribute("aria-expanded", "true");
+  }
+  const makerNotes = screen.getByRole("region", { name: "Maker notes" });
+  const toggle = within(makerNotes).getByRole("button", { name: "Maker notes" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(within(makerNotes).getByText("EOS R6")).not.toBeVisible();
+
+  await userEvent.click(toggle);
+
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(within(makerNotes).getByText("EOS R6")).toBeVisible();
+});
+
+it("reveals a Field's exact Tag name when its label is hovered", async () => {
+  await openPhoto(everySection);
+
+  const label = screen.getByText("Exposure Time");
+  await userEvent.hover(label);
+
+  expect(label).toHaveAttribute("title", "ExposureTime");
+  expect(screen.getByTitle("CanonModelID")).toHaveTextContent("Canon Model ID");
+});
