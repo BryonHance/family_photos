@@ -1,3 +1,22 @@
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# node
+node_modules/
+dist/
+
+# Photos never enter the repo outside the generated fixtures (ADR-0001)
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[hH][eE][iI][cC]
+*.[hH][eE][iI][fF]
+*.[pP][nN][gG]
+*.[wW][eE][bB][pP]
+*.[tT][iI][fF]
+*.[tT][iI][fF][fF]
+*.[dD][nN][gG]
+*.[cC][rR][23]
+*.[nN][eE][fF]
+*.[aA][rR][wW]
+!fixtures/**

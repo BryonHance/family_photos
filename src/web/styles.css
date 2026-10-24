@@ -1,0 +1,57 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.viewer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  min-height: 100vh;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.photo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* image-orientation: from-image is the browser default, so JPEGs display upright. */
+.photo img {
+  max-width: 100%;
+  max-height: 85vh;
+  object-fit: contain;
+}
+
+.panel table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.panel th,
+.panel td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.panel .raw {
+  opacity: 0.6;
+  font-family: ui-monospace, monospace;
+}
+
+@media (max-width: 800px) {
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
