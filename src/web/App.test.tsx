@@ -290,3 +290,42 @@ it("shows no Warnings area when a Photo has no Warnings", async () => {
   await screen.findByRole("region", { name: "EXIF" });
   expect(screen.queryByRole("region", { name: /warnings/i })).not.toBeInTheDocument();
 });
+
+it("shows the server's converted preview for a HEIC Photo", async () => {
+  const heic: Analysis = {
+    ...analysis,
+    photo: { name: "IMG_0001.HEIC", sizeBytes: 924, mimeType: "image/heic" },
+    preview: { kind: "converted", mimeType: "image/jpeg", base64: "/9j/AAAA" },
+  };
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json(heic));
+  render(<App />);
+
+  await userEvent.upload(
+    screen.getByLabelText(/choose a photo/i),
+    new File(["heic bytes"], "IMG_0001.HEIC", { type: "image/heic" }),
+  );
+
+  expect(await screen.findByRole("img", { name: "IMG_0001.HEIC" })).toHaveAttribute(
+    "src",
+    "data:image/jpeg;base64,/9j/AAAA",
+  );
+});
+
+it("shows a placeholder instead of an image when a Photo has no preview", async () => {
+  const raw: Analysis = {
+    ...analysis,
+    photo: { name: "IMG_0001.DNG", sizeBytes: 840, mimeType: "image/x-adobe-dng" },
+    preview: { kind: "none" },
+  };
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json(raw));
+  render(<App />);
+
+  await userEvent.upload(
+    screen.getByLabelText(/choose a photo/i),
+    new File(["raw bytes"], "IMG_0001.DNG", { type: "image/x-adobe-dng" }),
+  );
+
+  expect(await screen.findByText(/no preview/i)).toBeInTheDocument();
+  expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "EXIF" })).toBeInTheDocument();
+});

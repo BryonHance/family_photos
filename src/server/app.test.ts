@@ -2,6 +2,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExifTool } from "exiftool-vendored";
+import jpeg from "jpeg-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis, Section } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
@@ -92,6 +93,40 @@ describe("POST /api/analyze", () => {
 
     expect(analysis.preview).toEqual({ kind: "client" });
     expect(analysis.photo).toEqual({ name: "full-exif.jpg", sizeBytes: 1000, mimeType: "image/jpeg" });
+  });
+
+  it("converts an iPhone HEIC to an upright JPEG returned inline", async () => {
+    const analysis = await analyze("iphone.heic");
+
+    expect(analysis.photo.mimeType).toBe("image/heic");
+    const preview = analysis.preview;
+    if (preview.kind !== "converted") throw new Error(`expected a converted preview, got ${preview.kind}`);
+    expect(preview.mimeType).toBe("image/jpeg");
+    // The fixture is stored landscape, red over blue, and recorded as rotated
+    // 90 degrees clockwise. Upright it is portrait with red on the right.
+    const image = jpeg.decode(Buffer.from(preview.base64, "base64"));
+    expect([image.width, image.height]).toEqual([48, 64]);
+    const pixel = (x: number, y: number) => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+    const [leftR, , leftB] = pixel(4, 32);
+    const [rightR, , rightB] = pixel(43, 32);
+    expect(leftB).toBeGreaterThan(200);
+    expect(leftR).toBeLessThan(50);
+    expect(rightR).toBeGreaterThan(200);
+    expect(rightB).toBeLessThan(50);
+  });
+
+  it.each(["gradient.png", "gradient.webp"])("tells the browser to preview %s from its own copy", async (name) => {
+    expect((await analyze(name)).preview).toEqual({ kind: "client" });
+  });
+
+  it.each([
+    ["scan.tif", "Epson"],
+    ["raw.dng", "Canon"],
+  ])("returns %s's Sections with no preview", async (name, make) => {
+    const analysis = await analyze(name);
+
+    expect(analysis.preview).toEqual({ kind: "none" });
+    expect(section(analysis, "EXIF")?.fields).toContainEqual({ tag: "Make", label: "Make", raw: make });
   });
 
   it("groups every Field into the seven Sections, in a fixed order", async () => {

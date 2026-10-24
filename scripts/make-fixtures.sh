@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the test fixtures. Every fixture is generated here, never a real
-# family Photo, because the repo is public (ADR-0001). Needs ImageMagick.
+# family Photo, because the repo is public (ADR-0001). Needs ImageMagick and
+# heif-enc (libheif).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 exiftool="$(ls node_modules/.pnpm/exiftool-vendored.pl@*/node_modules/exiftool-vendored.pl/bin/exiftool | head -1)"
@@ -42,6 +43,7 @@ printf '\x00\x01\x00\x10\x00\x04\x00\x00\x00\x01\x80\x00\x04\x53\x00\x00\x00\x00
   -GPSLatitude=37.7749 -GPSLatitudeRef=N -GPSLongitude=122.4194 -GPSLongitudeRef=W \
   -IPTC:Caption-Abstract="Family at the beach" -XMP-dc:Title="Beach day" \
   "$out/every-section.jpg"
+
 # Stripped of all metadata, as a messaging app would send it.
 magick -size 64x48 gradient:steelblue-orange -strip "$out/no-metadata.jpg"
 
@@ -52,3 +54,26 @@ magick -size 64x48 gradient:steelblue-orange -strip "$out/no-date-taken.jpg"
 # The full-EXIF JPEG cut off partway through its image data, as an interrupted
 # copy leaves it. Its EXIF still reads.
 head -c 700 "$out/full-exif.jpg" > "$out/truncated.jpg"
+
+# iPhone-style HEIC: landscape pixels (red top half, blue bottom half) that an
+# iPhone held upright would record, with both an HEIF irot box and EXIF
+# Orientation 6. heif-enc turns the source JPEG's Orientation into the irot box
+# and keeps the EXIF, as an iPhone does. Viewed upright it is portrait, red on
+# the right.
+tmp="$(mktemp -d)"
+# Replaces the earlier trap, so it cleans up every temporary file.
+trap 'rm -rf "$icc" "$makernotes" "$tmp"' EXIT
+magick -size 64x24 xc:red -size 64x24 xc:blue -append -strip "$tmp/iphone.jpg"
+"$exiftool" -q -overwrite_original -Orientation#=6 -Make="Apple" -Model="iPhone 15 Pro" \
+  -DateTimeOriginal="2024:07:04 18:30:00" -OffsetTimeOriginal="-07:00" "$tmp/iphone.jpg"
+heif-enc -q 90 -o "$out/iphone.heic" "$tmp/iphone.jpg"
+
+# Formats the browser previews itself, and formats with no preview in v1.
+magick -size 64x48 gradient:steelblue-orange -strip "$out/gradient.png"
+magick -size 64x48 gradient:steelblue-orange -strip "$out/gradient.webp"
+magick -size 64x48 gradient:steelblue-orange -strip -compress zip "$out/scan.tif"
+"$exiftool" -q -overwrite_original -Make="Epson" -Model="Perfection V600" "$out/scan.tif"
+
+# A minimal RAW: a TIFF that ExifTool recognizes as DNG from its DNGVersion.
+cp "$out/scan.tif" "$out/raw.dng"
+"$exiftool" -q -overwrite_original -DNGVersion="1.4.0.0" -Make="Canon" -Model="Canon EOS R6" "$out/raw.dng"

@@ -47,7 +47,7 @@ export function App() {
     >
       <div className="photo">
         {opened ? (
-          <img src={opened.previewUrl} alt={opened.analysis.photo.name} />
+          <PhotoPreview {...opened} />
         ) : (
           <p className="hint">Drop a Photo here</p>
         )}
@@ -84,6 +84,22 @@ export function App() {
       </div>
     </main>
   );
+}
+
+function PhotoPreview({ analysis, previewUrl }: Opened) {
+  const { preview, photo } = analysis;
+  switch (preview.kind) {
+    case "client":
+      return <img src={previewUrl} alt={photo.name} />;
+    case "converted":
+      return <img src={`data:${preview.mimeType};base64,${preview.base64}`} alt={photo.name} />;
+    case "none":
+      return (
+        <p className="no-preview">
+          No preview for this format. Its metadata is shown alongside.
+        </p>
+      );
+  }
 }
 
 function Warnings({ warnings }: { warnings: Warning[] }) {

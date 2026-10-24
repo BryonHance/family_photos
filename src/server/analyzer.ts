@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
+import { previewFor } from "./preview.ts";
 import { deriveWarnings } from "./warnings.ts";
 
 export type AnalyzerConfig = {
@@ -97,7 +98,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: type },
-    preview: { kind: "client" },
+    preview: await previewFor(type, photo.bytes),
     warnings: deriveWarnings(tags, photo.lastModified),
     summary: summarize(tags),
     sections,
