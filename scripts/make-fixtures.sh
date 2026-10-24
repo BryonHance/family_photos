@@ -18,3 +18,9 @@ magick -size 64x48 gradient:steelblue-orange -strip "$out/full-exif.jpg"
 # Same image recorded sideways: Orientation 6 means "rotate 90 CW to view".
 magick -size 64x48 gradient:steelblue-orange -strip "$out/rotated.jpg"
 "$exiftool" -q -overwrite_original -Orientation#=6 -Make="Apple" -Model="iPhone 15" "$out/rotated.jpg"
+
+# A phone shot with a Date taken but no GPS Fields and no timezone offset.
+magick -size 64x48 gradient:seagreen-khaki -strip "$out/no-location.jpg"
+"$exiftool" -q -overwrite_original \
+  -Make="Google" -Model="Pixel 8" -DateTimeOriginal="2023:12:25 09:15:00" \
+  "$out/no-location.jpg"

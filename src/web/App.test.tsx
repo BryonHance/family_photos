@@ -72,3 +72,61 @@ it("analyzes a Photo dropped onto the page", async () => {
   expect(body.get("photo")).toBeInstanceOf(File);
   expect(body.get("lastModified")).toBe(String(photo.lastModified));
 });
+
+const fullSummary: Analysis["summary"] = {
+  dateTaken: "2024:07:04 18:30:00",
+  timezone: "-07:00",
+  camera: "Canon EOS R6",
+  lens: "RF24-105mm F4 L IS USM",
+  exposure: { shutter: "1/250", aperture: "f/4", iso: "200", focalLength: "50.0 mm" },
+  location: { latitude: 37.7749, longitude: -122.4194 },
+};
+
+async function openPhotoWith(summary: Analysis["summary"]) {
+  vi.mocked(fetch).mockResolvedValue(Response.json({ ...analysis, summary }));
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  return screen.findByRole("region", { name: "Summary" });
+}
+
+const summaryValue = (summary: HTMLElement, label: string) =>
+  within(summary).getByText(label).nextElementSibling?.textContent;
+
+it("shows the Summary's Date taken, timezone, camera, lens, exposure and location", async () => {
+  const summary = await openPhotoWith(fullSummary);
+
+  expect(summaryValue(summary, "Date taken")).toBe("2024:07:04 18:30:00");
+  expect(summaryValue(summary, "Timezone")).toBe("-07:00");
+  expect(summaryValue(summary, "Camera")).toBe("Canon EOS R6");
+  expect(summaryValue(summary, "Lens")).toBe("RF24-105mm F4 L IS USM");
+  expect(summaryValue(summary, "Shutter speed")).toBe("1/250");
+  expect(summaryValue(summary, "Aperture")).toBe("f/4");
+  expect(summaryValue(summary, "ISO")).toBe("200");
+  expect(summaryValue(summary, "Focal length")).toBe("50.0 mm");
+  expect(summaryValue(summary, "Location")).toContain("37.7749, -122.4194");
+});
+
+it("says 'no location' and an 'unknown' timezone when the Summary has neither", async () => {
+  const summary = await openPhotoWith({ dateTaken: "2023:12:25 09:15:00", camera: "Google Pixel 8" });
+
+  expect(summaryValue(summary, "Date taken")).toBe("2023:12:25 09:15:00");
+  expect(summaryValue(summary, "Timezone")).toBe("unknown");
+  expect(summaryValue(summary, "Location")).toBe("no location");
+});
+
+it("links the Photo's location to OpenStreetMap", async () => {
+  const summary = await openPhotoWith(fullSummary);
+
+  const link = within(summary).getByRole("link", { name: /openstreetmap/i });
+  const url = new URL(link.getAttribute("href")!);
+  expect(url.origin).toBe("https://www.openstreetmap.org");
+  expect(url.searchParams.get("mlat")).toBe("37.7749");
+  expect(url.searchParams.get("mlon")).toBe("-122.4194");
+  expect(url.hash).toContain("37.7749/-122.4194");
+});
+
+it("offers no OpenStreetMap link when the Photo has no location", async () => {
+  const summary = await openPhotoWith({ camera: "Google Pixel 8" });
+
+  expect(within(summary).queryByRole("link", { name: /openstreetmap/i })).not.toBeInTheDocument();
+});

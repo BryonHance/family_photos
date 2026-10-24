@@ -85,3 +85,24 @@ describe("POST /api/analyze", () => {
     expect(analysis.photo).toEqual({ name: "full-exif.jpg", sizeBytes: 1000, mimeType: "image/jpeg" });
   });
 });
+
+describe("Summary", () => {
+  it("gives the full-EXIF Photo's Date taken, timezone, camera, lens, exposure and location", async () => {
+    const { summary } = await analyze("full-exif.jpg");
+
+    expect(summary).toEqual({
+      dateTaken: "2024:07:04 18:30:00",
+      timezone: "-07:00",
+      camera: "Canon EOS R6",
+      lens: "RF24-105mm F4 L IS USM",
+      exposure: { shutter: "1/250", aperture: "f/4", iso: "200", focalLength: "50.0 mm" },
+      location: { latitude: 37.7749, longitude: -122.4194 },
+    });
+  });
+
+  it("omits location and timezone for a Photo without GPS Fields or a timezone offset", async () => {
+    const { summary } = await analyze("no-location.jpg");
+
+    expect(summary).toEqual({ dateTaken: "2023:12:25 09:15:00", camera: "Google Pixel 8" });
+  });
+});
