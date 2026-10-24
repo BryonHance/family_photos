@@ -1,0 +1,8 @@
+services:
+  viewer:
+    build: .
+    # Host port first: change 8080 to fit alongside other services on the server.
+    # Reachable only from the home network and VPN; v1 has no login (ADR-0001).
+    ports:
+      - "8080:3000"
+    restart: unless-stopped
