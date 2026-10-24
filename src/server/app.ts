@@ -16,7 +16,14 @@ export function createApp(config: AppConfig) {
     }
 
     const bytes = new Uint8Array(await photo.arrayBuffer());
-    return c.json(await analyzePhoto(config, { bytes, name: photo.name }));
+    const lastModified = typeof body["lastModified"] === "string" ? Number(body["lastModified"]) : NaN;
+    return c.json(
+      await analyzePhoto(config, {
+        bytes,
+        name: photo.name,
+        lastModified: Number.isFinite(lastModified) ? lastModified : undefined,
+      }),
+    );
   });
 
   return app;

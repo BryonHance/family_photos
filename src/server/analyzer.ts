@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Field, Section, SectionName } from "../shared/analysis.ts";
+import { deriveWarnings } from "./warnings.ts";
 
 export type AnalyzerConfig = {
   exiftool: ExifTool;
@@ -10,7 +11,12 @@ export type AnalyzerConfig = {
   tempDir: string;
 };
 
-export type PhotoUpload = { bytes: Uint8Array; name: string };
+export type PhotoUpload = {
+  bytes: Uint8Array;
+  name: string;
+  /** The file's modified time in milliseconds since the epoch, when the browser sent it. */
+  lastModified?: number;
+};
 
 /** One entry of ExifTool's long (`-l`) JSON output. */
 type LongTag = { desc: string; val: string | number; num?: string | number };
@@ -56,7 +62,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: mimeType(tags["File:MIMEType"]) },
     preview: { kind: "client" },
-    warnings: [],
+    warnings: deriveWarnings(tags, photo.lastModified),
     summary: {},
     sections,
   };
