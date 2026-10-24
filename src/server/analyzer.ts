@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
 import { previewFor } from "./preview.ts";
-import { deriveWarnings } from "./warnings.ts";
+import { deriveWarnings, STRUCTURAL_WARNINGS_ONLY } from "./warnings.ts";
 
 export type AnalyzerConfig = {
   exiftool: ExifTool;
@@ -166,7 +166,7 @@ async function readTags({ exiftool, tempDir }: AnalyzerConfig, bytes: Uint8Array
   const path = join(tempDir, randomUUID());
   try {
     await writeFile(path, bytes);
-    return (await exiftool.readRaw(path, { readArgs: ["-l", "-G0:1", "-a"] })) as Record<string, unknown>;
+    return (await exiftool.readRaw(path, { readArgs: ["-l", "-G0:1", "-a", ...STRUCTURAL_WARNINGS_ONLY] })) as Record<string, unknown>;
   } finally {
     await rm(path, { force: true });
   }

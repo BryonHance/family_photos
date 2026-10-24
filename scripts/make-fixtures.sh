@@ -55,6 +55,34 @@ magick -size 64x48 gradient:steelblue-orange -strip "$out/no-date-taken.jpg"
 # copy leaves it. Its EXIF still reads.
 head -c 700 "$out/full-exif.jpg" > "$out/truncated.jpg"
 
+# A healthy JPEG whose maker notes are an unrecognized blob from a made-up
+# camera maker. ExifTool flags that with a "[minor]" warning, which says nothing
+# about the file's structure.
+makernotes_unknown="$(mktemp)"
+printf 'ACME\x00\x00not an ifd at all' > "$makernotes_unknown"
+magick -size 64x48 gradient:steelblue-orange -strip "$out/minor-warning.jpg"
+"$exiftool" -q -overwrite_original \
+  -Make="Acme" -Model="Acme One" "-MakerNoteUnknown<=$makernotes_unknown" \
+  -DateTimeOriginal="2024:07:04 18:30:00" -OffsetTimeOriginal="-07:00" \
+  "$out/minor-warning.jpg"
+rm -f "$makernotes_unknown"
+
+# The same JPEG cut off before its image data: the minor warning comes
+# first, and must not hide the truncation.
+head -c 500 "$out/minor-warning.jpg" > "$out/truncated-minor-warning.jpg"
+
+# The full-EXIF JPEG with a UserComment whose 8-byte character code is not one
+# EXIF defines. ExifTool warns "Invalid EXIF text encoding", a full warning that
+# is about one Field's text, not the file's structure. ExifTool writes the code
+# "ASCII\0\0\0"; the byte patch swaps it for "BOGUS\0\0\0".
+cp "$out/full-exif.jpg" "$out/bad-text-encoding.jpg"
+"$exiftool" -q -overwrite_original -UserComment="Family at the beach" "$out/bad-text-encoding.jpg"
+LC_ALL=C perl -0777 -pi -e 's/ASCII\0\0\0Family/BOGUS\0\0\0Family/' "$out/bad-text-encoding.jpg"
+
+# The same JPEG cut off before its image data: ExifTool reports the text
+# encoding warning first, and it must not hide the truncation.
+head -c 750 "$out/bad-text-encoding.jpg" > "$out/truncated-bad-text-encoding.jpg"
+
 # iPhone-style HEIC: landscape pixels (red top half, blue bottom half) that an
 # iPhone held upright would record, with both an HEIF irot box and EXIF
 # Orientation 6. heif-enc turns the source JPEG's Orientation into the irot box

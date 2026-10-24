@@ -274,6 +274,24 @@ describe("Warnings", () => {
     expect(section(analysis, "File")?.fields).toContainEqual({ tag: "MIMEType", label: "MIME Type", raw: "image/jpeg" });
   });
 
+  it("does not warn of a Damaged file for a minor ExifTool warning that says nothing about the file's structure", async () => {
+    // minor-warning.jpg is healthy apart from unrecognized maker notes, a "[minor]" ExifTool warning.
+    expect((await analyze("minor-warning.jpg", takenAt)).warnings).toEqual([]);
+  });
+
+  it("does not warn of a Damaged file for an ExifTool warning about one Field's text rather than the file's structure", async () => {
+    // bad-text-encoding.jpg's UserComment has an unknown character code: "Invalid EXIF text encoding".
+    expect((await analyze("bad-text-encoding.jpg", takenAt)).warnings).toEqual([]);
+  });
+
+  it("warns of a Damaged file for a truncated JPEG even when a minor ExifTool warning comes first", async () => {
+    expect(kinds(await analyze("truncated-minor-warning.jpg", takenAt))).toEqual(["damaged-file"]);
+  });
+
+  it("warns of a Damaged file for a truncated JPEG even when a warning about one Field's text comes first", async () => {
+    expect(kinds(await analyze("truncated-bad-text-encoding.jpg", takenAt))).toEqual(["damaged-file"]);
+  });
+
   it("skips the Date mismatch check when there is no Date taken", async () => {
     expect(kinds(await analyze("no-date-taken.jpg", Date.UTC(2001, 0, 1)))).toEqual(["no-date-taken"]);
   });

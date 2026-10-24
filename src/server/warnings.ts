@@ -15,6 +15,24 @@ const DATE_TAKEN_OFFSET = "EXIF:ExifIFD:OffsetTimeOriginal";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * ExifTool warnings that are about the file's structure: truncation, format
+ * errors, and corrupt or bad segments, chunks, IFDs and offsets. Other warnings,
+ * such as an unknown text encoding in one Field, say nothing about whether the
+ * Photo is damaged. ("[minor]" warnings never get this far: exiftool-vendored
+ * reads with -ignoreMinorErrors, and they are skipped below as well.)
+ */
+const STRUCTURAL_PROBLEM =
+  /format error|truncat|corrupt|unexpected end|end of file|error (?:reading|processing)|incomplete|not a valid|\bbad\b|invalid (?:offset|magic|TIFF|.*(?:segment|chunk|IFD|directory|header|size|length))|(?:IFD|segment|chunk|directory).*(?:loop|overlap|missing|references)/i;
+
+/**
+ * ExifTool's JSON carries only its first Warning, so a warning about one Field
+ * could hide a later one about the file's structure. These read arguments have
+ * ExifTool drop every warning that is not structural (its NoWarning option takes
+ * a Perl regular expression).
+ */
+export const STRUCTURAL_WARNINGS_ONLY = ["-api", `NoWarning=(?i)^(?!.*(?:${STRUCTURAL_PROBLEM.source}))`];
+
+/**
  * @param lastModified The file's modified time as the browser reported it, in
  *   milliseconds since the epoch; the Date mismatch check is skipped without it.
  */
@@ -44,9 +62,12 @@ export function deriveWarnings(tags: RawTags, lastModified: number | undefined):
     }
   }
 
-  // ExifTool reports trouble reading the file's structure in its own Error and
-  // Warning tags, and still returns whatever it could read.
-  const problem = rawText(tags["ExifTool:Error"]) || rawText(tags["ExifTool:Warning"]);
+  // ExifTool reports trouble reading the file in its own Error and Warning tags,
+  // and still returns whatever it could read. Every Error counts; a Warning
+  // counts only when it is about the file's structure.
+  const warning = rawText(tags["ExifTool:Warning"]);
+  const structuralWarning = !warning.startsWith("[minor]") && STRUCTURAL_PROBLEM.test(warning) ? warning : "";
+  const problem = rawText(tags["ExifTool:Error"]) || structuralWarning;
   if (problem) {
     warnings.push({
       kind: "damaged-file",
