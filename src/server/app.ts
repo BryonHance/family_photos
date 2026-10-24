@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import type { AnalyzeError } from "../shared/analysis.ts";
+import type { AnalyzeError, AnalyzeErrorKind } from "../shared/analysis.ts";
 import { analyzePhoto, UnsupportedFileError, type AnalyzerConfig } from "./analyzer.ts";
 
 export type AppConfig = AnalyzerConfig & {
@@ -14,7 +14,7 @@ const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 export function createApp(config: AppConfig) {
   const app = new Hono();
 
-  const reject = (c: Context, status: 400 | 413 | 415, kind: string, message: string) =>
+  const reject = (c: Context, status: 400 | 413 | 415, kind: AnalyzeErrorKind, message: string) =>
     c.json<AnalyzeError>({ error: { kind, message } }, status);
 
   const tooLarge = (c: Context) =>

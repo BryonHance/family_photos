@@ -1,42 +1,61 @@
-import { useEffect, useId, useState, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import type { Analysis, AnalyzeError, Field, Section, Summary, Warning } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
+/** What the viewer is showing: nothing yet, a Photo being analyzed, an error, or an opened Photo. */
+type ViewerState =
+  | { status: "empty" }
+  | { status: "analyzing"; photoName: string }
+  | { status: "failed"; message: string }
+  | ({ status: "opened" } & Opened);
+
 export function App() {
-  const [opened, setOpened] = useState<Opened | null>(null);
-  const [analyzing, setAnalyzing] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<ViewerState>({ status: "empty" });
   const [filter, setFilter] = useState("");
+  // The request for the Photo opened most recently. Opening another aborts it, so
+  // a slower response for an earlier Photo can never replace a later one.
+  const request = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!opened) return;
-    return () => URL.revokeObjectURL(opened.previewUrl);
-  }, [opened]);
+    if (state.status !== "opened") return;
+    const { previewUrl } = state;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [state]);
 
-  async function open(photo: File) {
-    setOpened(null);
-    setError(null);
-    setAnalyzing(photo.name);
+  async function openPhoto(photo: File) {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setState({ status: "analyzing", photoName: photo.name });
+    let next: ViewerState;
     try {
       const form = new FormData();
       form.append("photo", photo);
       form.append("lastModified", String(photo.lastModified));
-      const res = await fetch("/api/analyze", { method: "POST", body: form });
+      const res = await fetch("/api/analyze", { method: "POST", body: form, signal: controller.signal });
       const body = (await res.json()) as Analysis | AnalyzeError;
-      if ("error" in body) setError(body.error.message);
-      else setOpened({ analysis: body, previewUrl: URL.createObjectURL(photo) });
+      next =
+        "error" in body
+          ? { status: "failed", message: body.error.message }
+          : { status: "opened", analysis: body, previewUrl: URL.createObjectURL(photo) };
     } catch {
-      setError("The Photo could not be analyzed. Check the connection to the server and try again.");
-    } finally {
-      setAnalyzing(null);
+      next = {
+        status: "failed",
+        message: "The Photo could not be analyzed. Check the connection to the server and try again.",
+      };
     }
+    if (controller.signal.aborted) {
+      if (next.status === "opened") URL.revokeObjectURL(next.previewUrl);
+      return;
+    }
+    setState(next);
   }
 
   function onDrop(event: DragEvent) {
     event.preventDefault();
     const photo = event.dataTransfer.files[0];
-    if (photo) void open(photo);
+    if (photo) void openPhoto(photo);
   }
 
   return (
@@ -47,11 +66,7 @@ export function App() {
       onDrop={onDrop}
     >
       <div className="photo">
-        {opened ? (
-          <PhotoPreview {...opened} />
-        ) : (
-          <p className="hint">Drop a Photo here</p>
-        )}
+        {state.status === "opened" ? <PhotoPreview {...state} /> : <p className="hint">Drop a Photo here</p>}
         <label className="picker">
           Choose a Photo
           <input
@@ -59,7 +74,7 @@ export function App() {
             accept="image/*"
             onChange={(event) => {
               const photo = event.target.files?.[0];
-              if (photo) void open(photo);
+              if (photo) void openPhoto(photo);
               // Lets the same file be picked again, for example after an error.
               event.target.value = "";
             }}
@@ -67,33 +82,50 @@ export function App() {
         </label>
       </div>
       <div className="panel">
-        {analyzing !== null && (
+        {state.status === "analyzing" && (
           <p className="loading" role="status">
-            Analyzing {analyzing}…
+            Analyzing {state.photoName}…
           </p>
         )}
-        {error !== null && (
+        {state.status === "failed" && (
           <p className="error" role="alert">
-            {error}
+            {state.message}
           </p>
         )}
-        {opened && opened.analysis.warnings.length > 0 ? <Warnings warnings={opened.analysis.warnings} /> : null}
-        {opened && <SummaryCard summary={opened.analysis.summary} />}
-        {opened && (
-          <input
-            type="search"
-            className="filter"
-            aria-label="Filter Fields"
-            placeholder="Filter Fields"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-          />
+        {state.status === "opened" && (
+          <OpenedPhotoPanel analysis={state.analysis} filter={filter} onFilterChange={setFilter} />
         )}
-        {opened?.analysis.sections.map((section) => (
-          <SectionTable key={section.name} section={section} filter={filter} />
-        ))}
       </div>
     </main>
+  );
+}
+
+/** The panel for an opened Photo: Warnings, Summary, the filter box, then its Sections. */
+function OpenedPhotoPanel({
+  analysis,
+  filter,
+  onFilterChange,
+}: {
+  analysis: Analysis;
+  filter: string;
+  onFilterChange: (filter: string) => void;
+}) {
+  return (
+    <>
+      {analysis.warnings.length > 0 && <Warnings warnings={analysis.warnings} />}
+      <SummaryCard summary={analysis.summary} />
+      <input
+        type="search"
+        className="filter"
+        aria-label="Filter Fields"
+        placeholder="Filter Fields"
+        value={filter}
+        onChange={(event) => onFilterChange(event.target.value)}
+      />
+      {analysis.sections.map((section) => (
+        <SectionTable key={section.name} section={section} filter={filter} />
+      ))}
+    </>
   );
 }
 
@@ -173,7 +205,7 @@ function SummaryCard({ summary }: { summary: Summary }) {
 }
 
 /** A plain link: no map service hears of the location until the user clicks it (ADR-0001). */
-function openStreetMapUrl({ latitude, longitude }: { latitude: number; longitude: number }) {
+function openStreetMapUrl({ latitude, longitude }: NonNullable<Summary["location"]>) {
   return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=15/${latitude}/${longitude}`;
 }
 

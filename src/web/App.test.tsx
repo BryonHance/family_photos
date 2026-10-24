@@ -123,6 +123,60 @@ it("replaces the first Photo when a second one is opened, without a reload", asy
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:beach");
 });
 
+it("ignores a slower response for an earlier Photo once a later one is opened", async () => {
+  const garden: Analysis = {
+    ...analysis,
+    photo: { name: "garden.jpg", sizeBytes: 2000, mimeType: "image/jpeg" },
+    sections: [{ name: "File", fields: [{ tag: "FileName", label: "File Name", raw: "garden.jpg" }] }],
+  };
+  let respondBeach!: (res: Response) => void;
+  let respondGarden!: (res: Response) => void;
+  vi.mocked(fetch)
+    .mockReturnValueOnce(new Promise((resolve) => (respondBeach = resolve)))
+    .mockReturnValueOnce(new Promise((resolve) => (respondGarden = resolve)));
+  vi.mocked(URL.createObjectURL).mockReturnValueOnce("blob:beach").mockReturnValueOnce("blob:garden");
+  render(<App />);
+  const picker = screen.getByLabelText(/choose a photo/i);
+
+  await userEvent.upload(picker, photo);
+  await userEvent.upload(picker, new File(["more jpeg bytes"], "garden.jpg", { type: "image/jpeg" }));
+
+  // The earlier Photo's response arrives while the later one is still analyzing.
+  respondBeach(Response.json(analysis));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByRole("img", { name: "beach.jpg" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(/analyzing garden\.jpg/i);
+
+  respondGarden(Response.json(garden));
+  expect(await screen.findByRole("img", { name: "garden.jpg" })).toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "EXIF" })).not.toBeInTheDocument();
+});
+
+it("keeps a later Photo when the earlier Photo's response arrives after it", async () => {
+  const garden: Analysis = {
+    ...analysis,
+    photo: { name: "garden.jpg", sizeBytes: 2000, mimeType: "image/jpeg" },
+    sections: [{ name: "File", fields: [{ tag: "FileName", label: "File Name", raw: "garden.jpg" }] }],
+  };
+  let respondBeach!: (res: Response) => void;
+  vi.mocked(fetch)
+    .mockReturnValueOnce(new Promise((resolve) => (respondBeach = resolve)))
+    .mockResolvedValueOnce(Response.json(garden));
+  vi.mocked(URL.createObjectURL).mockReturnValueOnce("blob:beach").mockReturnValueOnce("blob:garden");
+  render(<App />);
+  const picker = screen.getByLabelText(/choose a photo/i);
+
+  await userEvent.upload(picker, photo);
+  await userEvent.upload(picker, new File(["more jpeg bytes"], "garden.jpg", { type: "image/jpeg" }));
+  expect(await screen.findByRole("img", { name: "garden.jpg" })).toBeInTheDocument();
+
+  respondBeach(Response.json(analysis));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.getByRole("img", { name: "garden.jpg" })).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "beach.jpg" })).not.toBeInTheDocument();
+});
+
 it("clears an earlier error once a Photo opens successfully", async () => {
   vi.mocked(fetch).mockResolvedValueOnce(
     Response.json({ error: { kind: "too-large", message: "Too large." } }, { status: 413 }),
@@ -392,7 +446,7 @@ it("shows the server's converted preview for a HEIC Photo", async () => {
   );
 });
 
-it("shows a placeholder instead of an image when a Photo has no preview", async () => {
+it("shows a placeholder instead of a preview when a Photo has no preview", async () => {
   const raw: Analysis = {
     ...analysis,
     photo: { name: "IMG_0001.DNG", sizeBytes: 840, mimeType: "image/x-adobe-dng" },

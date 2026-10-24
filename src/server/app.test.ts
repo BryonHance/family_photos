@@ -82,6 +82,33 @@ describe("POST /api/analyze", () => {
     expect(file?.fields.map((f) => f.tag)).not.toContain("FilePermissions");
   });
 
+  it("gives the file's modified time, as the browser sent it, in the File Section", async () => {
+    const analysis = await analyze("full-exif.jpg", Date.UTC(2024, 6, 5, 1, 30));
+
+    expect(section(analysis, "File")?.fields).toContainEqual({
+      tag: "FileModifyDate",
+      label: "File Modification Date/Time",
+      raw: Date.UTC(2024, 6, 5, 1, 30),
+      display: "2024:07:05 01:30:00+00:00",
+    });
+  });
+
+  it.each([
+    ["no modified time", undefined],
+    ["a modified time that is not a number", "yesterday"],
+    ["a modified time outside the range of dates", "1e20"],
+  ])("leaves the file's modified time out of the File Section when the browser sent %s", async (_, lastModified) => {
+    const form = new FormData();
+    form.append("photo", new File([await readFile(fixture("full-exif.jpg"))], "full-exif.jpg", { type: "image/jpeg" }));
+    if (lastModified !== undefined) form.append("lastModified", lastModified);
+
+    const res = await send(form);
+
+    expect(res.status).toBe(200);
+    const analysis = (await res.json()) as Analysis;
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).not.toContain("FileModifyDate");
+  });
+
   it("keeps no copy of the Photo once it has responded", async () => {
     await analyze("full-exif.jpg");
 
@@ -95,24 +122,34 @@ describe("POST /api/analyze", () => {
     expect(analysis.photo).toEqual({ name: "full-exif.jpg", sizeBytes: 1000, mimeType: "image/jpeg" });
   });
 
-  it("converts an iPhone HEIC to an upright JPEG returned inline", async () => {
-    const analysis = await analyze("iphone.heic");
-
+  /**
+   * The HEIC fixtures are stored landscape, red over blue, and recorded as rotated
+   * 90 degrees clockwise. Upright they are portrait with red on the right.
+   */
+  function expectUprightRedOnTheRight(analysis: Analysis) {
     expect(analysis.photo.mimeType).toBe("image/heic");
     const preview = analysis.preview;
     if (preview.kind !== "converted") throw new Error(`expected a converted preview, got ${preview.kind}`);
     expect(preview.mimeType).toBe("image/jpeg");
-    // The fixture is stored landscape, red over blue, and recorded as rotated
-    // 90 degrees clockwise. Upright it is portrait with red on the right.
-    const image = jpeg.decode(Buffer.from(preview.base64, "base64"));
-    expect([image.width, image.height]).toEqual([48, 64]);
-    const pixel = (x: number, y: number) => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+    const decoded = jpeg.decode(Buffer.from(preview.base64, "base64"));
+    expect([decoded.width, decoded.height]).toEqual([48, 64]);
+    const pixel = (x: number, y: number) => [...decoded.data.subarray((y * decoded.width + x) * 4, (y * decoded.width + x) * 4 + 3)];
     const [leftR, , leftB] = pixel(4, 32);
     const [rightR, , rightB] = pixel(43, 32);
     expect(leftB).toBeGreaterThan(200);
     expect(leftR).toBeLessThan(50);
     expect(rightR).toBeGreaterThan(200);
     expect(rightB).toBeLessThan(50);
+  }
+
+  it("converts an iPhone HEIC to an upright JPEG returned inline", async () => {
+    // iphone.heic records the turn twice, in its irot box and its EXIF Orientation; it must be applied once.
+    expectUprightRedOnTheRight(await analyze("iphone.heic"));
+  });
+
+  it("converts a HEIC whose only orientation is its EXIF Orientation to an upright JPEG", async () => {
+    // exif-oriented.heic has EXIF Orientation 6 and no irot box.
+    expectUprightRedOnTheRight(await analyze("exif-oriented.heic"));
   });
 
   it.each(["gradient.png", "gradient.webp"])("tells the browser to preview %s from its own copy", async (name) => {
@@ -160,6 +197,15 @@ describe("POST /api/analyze", () => {
 
     expect(section(analysis, "File")?.fields.map((f) => f.tag)).toContain("JFIFVersion");
     expect(section(analysis, "ICC")?.fields.map((f) => f.tag)).toContain("ProfileCMMType");
+  });
+
+  it("puts PNG text chunks in the XMP Section and the PNG image header in File", async () => {
+    const analysis = await analyze("text-chunks.png");
+
+    expect(section(analysis, "XMP")?.fields).toContainEqual({ tag: "Title", label: "Title", raw: "Beach day" });
+    expect(section(analysis, "XMP")?.fields).toContainEqual({ tag: "Comment", label: "Comment", raw: "Family at the beach" });
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).toContain("ColorType");
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).not.toContain("Title");
   });
 
   it("leaves out Composite tags, which ExifTool derives rather than reads", async () => {
@@ -242,6 +288,10 @@ describe("Warnings", () => {
     expect(analysis.warnings[0]?.message).toMatch(/stripped/i);
   });
 
+  it("counts PNG text chunks as metadata, so a PNG with only text chunks has no No metadata Warning", async () => {
+    expect(kinds(await analyze("text-chunks.png"))).toEqual(["no-date-taken"]);
+  });
+
   it("warns of No Date taken when a Photo has metadata but no Date taken", async () => {
     const analysis = await analyze("no-date-taken.jpg");
 
@@ -272,6 +322,24 @@ describe("Warnings", () => {
     expect(kinds(analysis)).toEqual(["damaged-file"]);
     expect(section(analysis, "EXIF")?.fields).toContainEqual({ tag: "Make", label: "Make", raw: "Canon" });
     expect(section(analysis, "File")?.fields).toContainEqual({ tag: "MIMEType", label: "MIME Type", raw: "image/jpeg" });
+  });
+
+  it("does not warn of a Damaged file for a minor ExifTool warning that says nothing about the file's structure", async () => {
+    // minor-warning.jpg is healthy apart from unrecognized maker notes, a "[minor]" ExifTool warning.
+    expect((await analyze("minor-warning.jpg", takenAt)).warnings).toEqual([]);
+  });
+
+  it("does not warn of a Damaged file for an ExifTool warning about one Field's text rather than the file's structure", async () => {
+    // bad-text-encoding.jpg's UserComment has an unknown character code: "Invalid EXIF text encoding".
+    expect((await analyze("bad-text-encoding.jpg", takenAt)).warnings).toEqual([]);
+  });
+
+  it("warns of a Damaged file for a truncated JPEG even when a minor ExifTool warning comes first", async () => {
+    expect(kinds(await analyze("truncated-minor-warning.jpg", takenAt))).toEqual(["damaged-file"]);
+  });
+
+  it("warns of a Damaged file for a truncated JPEG even when a warning about one Field's text comes first", async () => {
+    expect(kinds(await analyze("truncated-bad-text-encoding.jpg", takenAt))).toEqual(["damaged-file"]);
   });
 
   it("skips the Date mismatch check when there is no Date taken", async () => {
