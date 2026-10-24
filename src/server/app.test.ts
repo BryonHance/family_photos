@@ -82,6 +82,33 @@ describe("POST /api/analyze", () => {
     expect(file?.fields.map((f) => f.tag)).not.toContain("FilePermissions");
   });
 
+  it("gives the file's modified time, as the browser sent it, in the File Section", async () => {
+    const analysis = await analyze("full-exif.jpg", Date.UTC(2024, 6, 5, 1, 30));
+
+    expect(section(analysis, "File")?.fields).toContainEqual({
+      tag: "FileModifyDate",
+      label: "File Modification Date/Time",
+      raw: Date.UTC(2024, 6, 5, 1, 30),
+      display: "2024:07:05 01:30:00+00:00",
+    });
+  });
+
+  it.each([
+    ["no modified time", undefined],
+    ["a modified time that is not a number", "yesterday"],
+    ["a modified time outside the range of dates", "1e20"],
+  ])("leaves the file's modified time out of the File Section when the browser sent %s", async (_, lastModified) => {
+    const form = new FormData();
+    form.append("photo", new File([await readFile(fixture("full-exif.jpg"))], "full-exif.jpg", { type: "image/jpeg" }));
+    if (lastModified !== undefined) form.append("lastModified", lastModified);
+
+    const res = await send(form);
+
+    expect(res.status).toBe(200);
+    const analysis = (await res.json()) as Analysis;
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).not.toContain("FileModifyDate");
+  });
+
   it("keeps no copy of the Photo once it has responded", async () => {
     await analyze("full-exif.jpg");
 
@@ -172,6 +199,15 @@ describe("POST /api/analyze", () => {
     expect(section(analysis, "ICC")?.fields.map((f) => f.tag)).toContain("ProfileCMMType");
   });
 
+  it("puts PNG text chunks in the XMP Section and the PNG image header in File", async () => {
+    const analysis = await analyze("text-chunks.png");
+
+    expect(section(analysis, "XMP")?.fields).toContainEqual({ tag: "Title", label: "Title", raw: "Beach day" });
+    expect(section(analysis, "XMP")?.fields).toContainEqual({ tag: "Comment", label: "Comment", raw: "Family at the beach" });
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).toContain("ColorType");
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).not.toContain("Title");
+  });
+
   it("leaves out Composite tags, which ExifTool derives rather than reads", async () => {
     const analysis = await analyze("every-section.jpg");
 
@@ -250,6 +286,10 @@ describe("Warnings", () => {
 
     expect(kinds(analysis)).toEqual(["no-metadata"]);
     expect(analysis.warnings[0]?.message).toMatch(/stripped/i);
+  });
+
+  it("counts PNG text chunks as metadata, so a PNG with only text chunks has no No metadata Warning", async () => {
+    expect(kinds(await analyze("text-chunks.png"))).toEqual(["no-date-taken"]);
   });
 
   it("warns of No Date taken when a Photo has metadata but no Date taken", async () => {

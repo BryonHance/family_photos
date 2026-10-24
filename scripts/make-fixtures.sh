@@ -108,6 +108,11 @@ heif-enc -q 90 -o "$out/exif-oriented.heic" "$tmp/exif-oriented.jpg"
 # Formats the browser previews itself, and formats with no preview in v1.
 magick -size 64x48 gradient:steelblue-orange -strip "$out/gradient.png"
 magick -size 64x48 gradient:steelblue-orange -strip "$out/gradient.webp"
+
+# A PNG whose only metadata is in PNG text chunks, as many editors and
+# screenshot tools write it.
+magick -size 64x48 gradient:steelblue-orange -strip "$out/text-chunks.png"
+"$exiftool" -q -overwrite_original -PNG:Title="Beach day" -PNG:Comment="Family at the beach" "$out/text-chunks.png"
 magick -size 64x48 gradient:steelblue-orange -strip -compress zip "$out/scan.tif"
 "$exiftool" -q -overwrite_original -Make="Epson" -Model="Perfection V600" "$out/scan.tif"
 

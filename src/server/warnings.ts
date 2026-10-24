@@ -1,16 +1,9 @@
-import type { Warning } from "../shared/analysis.ts";
+import type { Section, SectionName, Warning } from "../shared/analysis.ts";
+import { DATE_TAKEN, DATE_TAKEN_OFFSET, rawValue, type Tags } from "./tags.ts";
 
-/** ExifTool's `-G0:1` output: "Family0:Family1:Tag" keys (or "Group:Tag" when both families agree), each a long (`-l`) tag. */
-export type RawTags = Record<string, unknown>;
-
-// Family-0 groups that come from one of the metadata standards (GPS sits under
-// EXIF). File and ICC describe the file and its colour profile, so they do not count.
-const METADATA_GROUPS = new Set(["EXIF", "IPTC", "XMP"]);
-
-// The Date taken is EXIF's DateTimeOriginal, with its timezone from
-// OffsetTimeOriginal: the same keys the Summary reads, so the two agree.
-const DATE_TAKEN = "EXIF:ExifIFD:DateTimeOriginal";
-const DATE_TAKEN_OFFSET = "EXIF:ExifIFD:OffsetTimeOriginal";
+// The Sections that come from EXIF (GPS is part of it), IPTC or XMP. File and
+// ICC describe the file and its colour profile, so they do not count.
+const METADATA_SECTIONS = new Set<SectionName>(["EXIF", "GPS", "IPTC", "XMP"]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -33,14 +26,14 @@ const STRUCTURAL_PROBLEM =
 export const STRUCTURAL_WARNINGS_ONLY = ["-api", `NoWarning=(?i)^(?!.*(?:${STRUCTURAL_PROBLEM.source}))`];
 
 /**
+ * @param sections The Photo's Sections, which decide whether it has any metadata.
  * @param lastModified The file's modified time as the browser reported it, in
  *   milliseconds since the epoch; the Date mismatch check is skipped without it.
  */
-export function deriveWarnings(tags: RawTags, lastModified: number | undefined): Warning[] {
-  const groups = new Set(Object.keys(tags).map((key) => key.split(":")[0] ?? ""));
+export function deriveWarnings(tags: Tags, sections: Section[], lastModified: number | undefined): Warning[] {
   const warnings: Warning[] = [];
 
-  if (![...groups].some((group) => METADATA_GROUPS.has(group))) {
+  if (!sections.some((section) => METADATA_SECTIONS.has(section.name))) {
     warnings.push({
       kind: "no-metadata",
       message: "This Photo has no EXIF, IPTC or XMP metadata. A messaging app or social site has probably stripped it.",
@@ -65,9 +58,9 @@ export function deriveWarnings(tags: RawTags, lastModified: number | undefined):
   // ExifTool reports trouble reading the file in its own Error and Warning tags,
   // and still returns whatever it could read. Every Error counts; a Warning
   // counts only when it is about the file's structure.
-  const warning = rawText(tags["ExifTool:Warning"]);
+  const warning = text(tags, "ExifTool:Warning");
   const structuralWarning = !warning.startsWith("[minor]") && STRUCTURAL_PROBLEM.test(warning) ? warning : "";
-  const problem = rawText(tags["ExifTool:Error"]) || structuralWarning;
+  const problem = text(tags, "ExifTool:Error") || structuralWarning;
   if (problem) {
     warnings.push({
       kind: "damaged-file",
@@ -83,18 +76,17 @@ export function deriveWarnings(tags: RawTags, lastModified: number | undefined):
  * "YYYY:MM:DD HH:MM:SS", with the offset in OffsetTimeOriginal. A Date taken
  * with no recorded offset is read as UTC; the 24-hour tolerance absorbs that.
  */
-function dateTakenMs(tags: RawTags): number | undefined {
-  const text = rawText(tags[DATE_TAKEN]) + rawText(tags[DATE_TAKEN_OFFSET]);
-
-  const match = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?/.exec(text);
+function dateTakenMs(tags: Tags): number | undefined {
+  const match = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?/.exec(
+    text(tags, DATE_TAKEN) + text(tags, DATE_TAKEN_OFFSET),
+  );
   if (!match) return undefined;
   const [, y, mo, d, h, mi, sec = "00", offset = "Z"] = match;
   const ms = Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${sec}${offset}`);
   return Number.isNaN(ms) ? undefined : ms;
 }
 
-function rawText(tag: unknown): string {
-  if (typeof tag !== "object" || tag === null || !("val" in tag)) return "";
-  const { val, num } = tag as { val: unknown; num?: unknown };
-  return String(num ?? val).trim();
+/** A tag's Raw value as trimmed text, or "" when it is absent. */
+function text(tags: Tags, key: string): string {
+  return String(rawValue(tags, key) ?? "").trim();
 }
