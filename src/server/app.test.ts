@@ -131,9 +131,9 @@ describe("POST /api/analyze", () => {
     const preview = analysis.preview;
     if (preview.kind !== "converted") throw new Error(`expected a converted preview, got ${preview.kind}`);
     expect(preview.mimeType).toBe("image/jpeg");
-    const image = jpeg.decode(Buffer.from(preview.base64, "base64"));
-    expect([image.width, image.height]).toEqual([48, 64]);
-    const pixel = (x: number, y: number) => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+    const decoded = jpeg.decode(Buffer.from(preview.base64, "base64"));
+    expect([decoded.width, decoded.height]).toEqual([48, 64]);
+    const pixel = (x: number, y: number) => [...decoded.data.subarray((y * decoded.width + x) * 4, (y * decoded.width + x) * 4 + 3)];
     const [leftR, , leftB] = pixel(4, 32);
     const [rightR, , rightB] = pixel(43, 32);
     expect(leftB).toBeGreaterThan(200);

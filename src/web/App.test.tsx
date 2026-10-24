@@ -446,7 +446,7 @@ it("shows the server's converted preview for a HEIC Photo", async () => {
   );
 });
 
-it("shows a placeholder instead of an image when a Photo has no preview", async () => {
+it("shows a placeholder instead of a preview when a Photo has no preview", async () => {
   const raw: Analysis = {
     ...analysis,
     photo: { name: "IMG_0001.DNG", sizeBytes: 840, mimeType: "image/x-adobe-dng" },

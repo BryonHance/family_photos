@@ -11,3 +11,4 @@ Family Photos carry GPS locations and children's faces, so the viewer promises t
 
 - No geocoding of GPS coordinates through an external API, no embedded third-party maps, and no editing or stripping of metadata. Changing any of these means revisiting this ADR.
 - Exposing the server to the public internet means adding authentication first.
+- The one exception to sending nothing beyond the server is the Summary's OpenStreetMap link: a plain, user-initiated link, so the Photo's location reaches OpenStreetMap only if the user clicks it, and nothing is sent until then.

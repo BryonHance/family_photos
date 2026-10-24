@@ -41,4 +41,6 @@ export type Analysis = {
   sections: Section[];
 };
 
-export type AnalyzeError = { error: { kind: string; message: string } };
+export type AnalyzeErrorKind = "no-photo" | "too-large" | "unsupported-file";
+
+export type AnalyzeError = { error: { kind: AnalyzeErrorKind; message: string } };
