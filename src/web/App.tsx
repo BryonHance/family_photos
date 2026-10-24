@@ -62,14 +62,29 @@ export function App() {
 
 function SectionTable({ section }: { section: Section }) {
   const headingId = useId();
+  const tableId = useId();
+  // Maker notes are proprietary and noisy, so they start out of the way.
+  const [expanded, setExpanded] = useState(section.name !== "Maker notes");
   return (
     <section aria-labelledby={headingId}>
-      <h2 id={headingId}>{section.name}</h2>
-      <table>
+      <h2 id={headingId}>
+        <button
+          type="button"
+          className="section-toggle"
+          aria-expanded={expanded}
+          aria-controls={tableId}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {section.name}
+        </button>
+      </h2>
+      <table id={tableId} hidden={!expanded}>
         <tbody>
           {section.fields.map((field, i) => (
             <tr key={`${field.tag}-${i}`}>
-              <th scope="row">{field.label}</th>
+              <th scope="row" title={field.tag}>
+                {field.label}
+              </th>
               <td>{field.display ?? String(field.raw)}</td>
               <td className="raw">{field.display === undefined ? null : String(field.raw)}</td>
             </tr>

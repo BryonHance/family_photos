@@ -15,15 +15,35 @@ export type PhotoUpload = { bytes: Uint8Array; name: string };
 /** One entry of ExifTool's long (`-l`) JSON output. */
 type LongTag = { desc: string; val: string | number; num?: string | number };
 
-// ExifTool family-1 groups, mapped to the Section they belong in.
+// ExifTool family-0 groups, mapped to the Section they belong in. Container
+// groups outside the seven Sections go in the nearest one: JFIF and other
+// file-format structure in File, MPF (a CIPA extension stored beside EXIF) in
+// EXIF, and Photoshop's resource block (which carries IPTC) in IPTC. Any group
+// not listed here describes the file's structure, so it falls back to File.
 const SECTION_BY_GROUP: Record<string, SectionName> = {
   File: "File",
-  IFD0: "EXIF",
-  IFD1: "EXIF",
-  ExifIFD: "EXIF",
-  SubIFD: "EXIF",
-  InteropIFD: "EXIF",
+  JFIF: "File",
+  EXIF: "EXIF",
+  MPF: "EXIF",
+  IPTC: "IPTC",
+  Photoshop: "IPTC",
+  XMP: "XMP",
+  ICC_Profile: "ICC",
+  MakerNotes: "Maker notes",
 };
+
+/**
+ * Groups whose tags are not Fields of the Photo: Composite tags are derived by
+ * ExifTool, not read from the Photo; ExifTool reports its own version; System
+ * describes the server's temporary copy.
+ */
+const IGNORED_GROUPS = new Set(["Composite", "ExifTool", "System"]);
+
+function sectionFor(family0: string, family1: string): SectionName | undefined {
+  if (IGNORED_GROUPS.has(family0) || IGNORED_GROUPS.has(family1)) return undefined;
+  if (family0 === "EXIF" && family1 === "GPS") return "GPS";
+  return SECTION_BY_GROUP[family0] ?? "File";
+}
 
 const SECTION_ORDER: SectionName[] = ["File", "EXIF", "GPS", "IPTC", "XMP", "ICC", "Maker notes"];
 
@@ -32,9 +52,13 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
 
   const fieldsBySection = new Map<SectionName, Field[]>();
   for (const [key, value] of Object.entries(tags)) {
-    const [group, tag] = key.split(":");
-    const sectionName = group ? SECTION_BY_GROUP[group] : undefined;
-    if (!sectionName || !tag || !isLongTag(value)) continue;
+    // Keys are "Family0:Family1:Tag", or "Group:Tag" when both families agree.
+    const parts = key.split(":");
+    const tag = parts.at(-1);
+    const family0 = parts[0] ?? "";
+    const family1 = parts.length > 2 ? (parts[1] ?? "") : family0;
+    const sectionName = sectionFor(family0, family1);
+    if (!sectionName || !tag || parts.length < 2 || !isLongTag(value)) continue;
     const fields = fieldsBySection.get(sectionName) ?? [];
     fields.push(toField(tag, value));
     fieldsBySection.set(sectionName, fields);
@@ -44,7 +68,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
   // directory, permissions), so only the file size carries over; the name comes
   // from the upload.
   const uploadFields: Field[] = [{ tag: "FileName", label: "File Name", raw: photo.name }];
-  const fileSize = tags["System:FileSize"];
+  const fileSize = tags["File:System:FileSize"];
   if (isLongTag(fileSize)) uploadFields.push(toField("FileSize", fileSize));
   fieldsBySection.set("File", [...uploadFields, ...(fieldsBySection.get("File") ?? [])]);
 
@@ -67,7 +91,7 @@ async function readTags({ exiftool, tempDir }: AnalyzerConfig, bytes: Uint8Array
   const path = join(tempDir, randomUUID());
   try {
     await writeFile(path, bytes);
-    return (await exiftool.readRaw(path, { readArgs: ["-l", "-G1", "-a"] })) as Record<string, unknown>;
+    return (await exiftool.readRaw(path, { readArgs: ["-l", "-G0:1", "-a"] })) as Record<string, unknown>;
   } finally {
     await rm(path, { force: true });
   }

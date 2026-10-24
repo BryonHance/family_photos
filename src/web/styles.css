@@ -45,6 +45,27 @@ body {
   overflow-wrap: anywhere;
 }
 
+.section-toggle {
+  all: unset;
+  cursor: pointer;
+}
+
+.section-toggle::before {
+  content: "▾ ";
+}
+
+.section-toggle[aria-expanded="false"]::before {
+  content: "▸ ";
+}
+
+.section-toggle:focus-visible {
+  outline: 2px solid currentColor;
+}
+
+.panel th[title] {
+  cursor: help;
+}
+
 .panel .raw {
   opacity: 0.6;
   font-family: ui-monospace, monospace;

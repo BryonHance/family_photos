@@ -84,4 +84,47 @@ describe("POST /api/analyze", () => {
     expect(analysis.preview).toEqual({ kind: "client" });
     expect(analysis.photo).toEqual({ name: "full-exif.jpg", sizeBytes: 1000, mimeType: "image/jpeg" });
   });
+
+  it("groups every Field into the seven Sections, in a fixed order", async () => {
+    const analysis = await analyze("every-section.jpg");
+
+    expect(analysis.sections.map((s) => s.name)).toEqual([
+      "File",
+      "EXIF",
+      "GPS",
+      "IPTC",
+      "XMP",
+      "ICC",
+      "Maker notes",
+    ]);
+  });
+
+  it.each([
+    ["GPS", { tag: "GPSLatitudeRef", label: "GPS Latitude Ref", raw: "N", display: "North" }],
+    ["IPTC", { tag: "Caption-Abstract", label: "Caption-Abstract", raw: "Family at the beach" }],
+    ["XMP", { tag: "Title", label: "Title", raw: "Beach day" }],
+    ["ICC", { tag: "ProfileCopyright", label: "Profile Copyright", raw: "No copyright, use freely" }],
+    ["Maker notes", { tag: "CanonModelID", label: "Canon Model ID", raw: 0x80000453, display: "EOS R6" }],
+  ] as const)("fills the %s Section", async (name, field) => {
+    const analysis = await analyze("every-section.jpg");
+
+    expect(section(analysis, name)?.fields).toContainEqual(field);
+  });
+
+  it("puts container groups in the nearest Section", async () => {
+    const analysis = await analyze("every-section.jpg");
+
+    expect(section(analysis, "File")?.fields.map((f) => f.tag)).toContain("JFIFVersion");
+    expect(section(analysis, "ICC")?.fields.map((f) => f.tag)).toContain("ProfileCMMType");
+  });
+
+  it("leaves out Composite tags, which ExifTool derives rather than reads", async () => {
+    const analysis = await analyze("every-section.jpg");
+
+    const tags = analysis.sections.flatMap((s) => s.fields.map((f) => f.tag));
+    expect(tags).not.toContain("GPSPosition");
+    expect(tags).not.toContain("ImageSize");
+    expect(tags).not.toContain("Megapixels");
+    expect(tags.filter((tag) => tag === "GPSLatitude")).toHaveLength(1);
+  });
 });
