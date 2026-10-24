@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type DragEvent } from "react";
-import type { Analysis, AnalyzeError, Section, Summary } from "../shared/analysis.ts";
+import type { Analysis, AnalyzeError, Field, Section, Summary } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -7,6 +7,7 @@ export function App() {
   const [opened, setOpened] = useState<Opened | null>(null);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   useEffect(() => {
     if (!opened) return;
@@ -77,8 +78,18 @@ export function App() {
           </p>
         )}
         {opened && <SummaryCard summary={opened.analysis.summary} />}
+        {opened && (
+          <input
+            type="search"
+            className="filter"
+            aria-label="Filter Fields"
+            placeholder="Filter Fields"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        )}
         {opened?.analysis.sections.map((section) => (
-          <SectionTable key={section.name} section={section} />
+          <SectionTable key={section.name} section={section} filter={filter} />
         ))}
       </div>
     </main>
@@ -135,28 +146,37 @@ function openStreetMapUrl({ latitude, longitude }: { latitude: number; longitude
   return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=15/${latitude}/${longitude}`;
 }
 
-function SectionTable({ section }: { section: Section }) {
+function SectionTable({ section, filter }: { section: Section; filter: string }) {
   const headingId = useId();
   const tableId = useId();
   // Maker notes are proprietary and noisy, so they start out of the way.
   const [expanded, setExpanded] = useState(section.name !== "Maker notes");
+  const filtering = filter.trim() !== "";
+  const fields = section.fields
+    .map((field, i) => ({ field, key: `${field.tag}-${i}` }))
+    .filter(({ field }) => matches(field, filter));
+  // While filtering, every match is shown, even in a collapsed Section. The Section is
+  // hidden rather than unmounted when nothing matches, so it keeps its collapsed or
+  // expanded state for when the filter is cleared.
+  const open = filtering || expanded;
   return (
-    <section aria-labelledby={headingId}>
+    <section aria-labelledby={headingId} hidden={fields.length === 0}>
       <h2 id={headingId}>
         <button
           type="button"
           className="section-toggle"
-          aria-expanded={expanded}
+          aria-expanded={open}
           aria-controls={tableId}
+          disabled={filtering}
           onClick={() => setExpanded(!expanded)}
         >
           {section.name}
         </button>
       </h2>
-      <table id={tableId} hidden={!expanded}>
+      <table id={tableId} hidden={!open}>
         <tbody>
-          {section.fields.map((field, i) => (
-            <tr key={`${field.tag}-${i}`}>
+          {fields.map(({ field, key }) => (
+            <tr key={key}>
               <th scope="row" title={field.tag}>
                 {field.label}
               </th>
@@ -167,5 +187,13 @@ function SectionTable({ section }: { section: Section }) {
         </tbody>
       </table>
     </section>
+  );
+}
+
+/** A Field matches when its label, Tag name, Raw value or Display value contains the filter text. */
+function matches(field: Field, filter: string) {
+  const needle = filter.trim().toLowerCase();
+  return [field.label, field.tag, String(field.raw), field.display ?? ""].some((text) =>
+    text.toLowerCase().includes(needle),
   );
 }

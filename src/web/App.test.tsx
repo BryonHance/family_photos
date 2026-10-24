@@ -260,3 +260,84 @@ it("reveals a Field's exact Tag name when its label is hovered", async () => {
   expect(label).toHaveAttribute("title", "ExposureTime");
   expect(screen.getByTitle("CanonModelID")).toHaveTextContent("Canon Model ID");
 });
+
+async function filterFields(text: string) {
+  const box = screen.getByRole("searchbox", { name: /filter fields/i });
+  await userEvent.clear(box);
+  if (text) await userEvent.type(box, text);
+}
+
+it("filters Fields by label", async () => {
+  await openPhoto(everySection);
+
+  await filterFields("exposure");
+
+  const exif = screen.getByRole("region", { name: "EXIF" });
+  expect(within(exif).getByText("Exposure Time")).toBeVisible();
+  expect(within(exif).queryByText("Make")).not.toBeInTheDocument();
+});
+
+it("filters Fields by Tag name", async () => {
+  await openPhoto(everySection);
+
+  // Only the Tag name "GPSLatitudeRef" has no space; its label is "GPS Latitude Ref".
+  await filterFields("latituderef");
+
+  expect(within(screen.getByRole("region", { name: "GPS" })).getByText("North")).toBeVisible();
+  expect(screen.queryByText("Exposure Time")).not.toBeInTheDocument();
+});
+
+it("filters Fields by Raw value and by Display value", async () => {
+  await openPhoto(everySection);
+
+  await filterFields("canon");
+  const exif = screen.getByRole("region", { name: "EXIF" });
+  expect(within(exif).getByText("Make")).toBeVisible();
+  expect(within(exif).queryByText("Exposure Time")).not.toBeInTheDocument();
+
+  await filterFields("1/250");
+  expect(within(exif).getByText("Exposure Time")).toBeVisible();
+  expect(within(exif).queryByText("Make")).not.toBeInTheDocument();
+});
+
+it("hides Sections with no matching Fields while filtering", async () => {
+  await openPhoto(everySection);
+
+  await filterFields("1/250");
+
+  expect(screen.getByRole("region", { name: "EXIF" })).toBeVisible();
+  for (const name of ["File", "GPS", "Maker notes"]) {
+    expect(screen.queryByRole("region", { name })).not.toBeInTheDocument();
+  }
+});
+
+it("shows a match inside collapsed Maker notes", async () => {
+  await openPhoto(everySection);
+  const toggle = screen.getByRole("button", { name: "Maker notes" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  await filterFields("eos");
+
+  const makerNotes = screen.getByRole("region", { name: "Maker notes" });
+  expect(within(makerNotes).getByText("Canon Model ID")).toBeVisible();
+  expect(within(makerNotes).getByText("EOS R6")).toBeVisible();
+});
+
+it("restores every Section's collapsed or expanded state when the filter is cleared", async () => {
+  await openPhoto(everySection);
+  await userEvent.click(screen.getByRole("button", { name: "GPS" }));
+
+  await filterFields("eos");
+  await filterFields("");
+
+  for (const name of ["File", "EXIF"]) {
+    expect(screen.getByRole("button", { name })).toHaveAttribute("aria-expanded", "true");
+  }
+  for (const name of ["GPS", "Maker notes"]) {
+    expect(screen.getByRole("button", { name })).toHaveAttribute("aria-expanded", "false");
+  }
+  expect(screen.getByText("North")).not.toBeVisible();
+  expect(screen.getByText("EOS R6")).not.toBeVisible();
+  expect(screen.getByText("Make")).toBeVisible();
+  expect(screen.getByText("Exposure Time")).toBeVisible();
+});
