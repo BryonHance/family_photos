@@ -95,15 +95,15 @@ describe("POST /api/analyze", () => {
     expect(analysis.photo).toEqual({ name: "full-exif.jpg", sizeBytes: 1000, mimeType: "image/jpeg" });
   });
 
-  it("converts an iPhone HEIC to an upright JPEG returned inline", async () => {
-    const analysis = await analyze("iphone.heic");
-
+  /**
+   * The HEIC fixtures are stored landscape, red over blue, and recorded as rotated
+   * 90 degrees clockwise. Upright they are portrait with red on the right.
+   */
+  function expectUprightRedOnTheRight(analysis: Analysis) {
     expect(analysis.photo.mimeType).toBe("image/heic");
     const preview = analysis.preview;
     if (preview.kind !== "converted") throw new Error(`expected a converted preview, got ${preview.kind}`);
     expect(preview.mimeType).toBe("image/jpeg");
-    // The fixture is stored landscape, red over blue, and recorded as rotated
-    // 90 degrees clockwise. Upright it is portrait with red on the right.
     const image = jpeg.decode(Buffer.from(preview.base64, "base64"));
     expect([image.width, image.height]).toEqual([48, 64]);
     const pixel = (x: number, y: number) => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
@@ -113,6 +113,16 @@ describe("POST /api/analyze", () => {
     expect(leftR).toBeLessThan(50);
     expect(rightR).toBeGreaterThan(200);
     expect(rightB).toBeLessThan(50);
+  }
+
+  it("converts an iPhone HEIC to an upright JPEG returned inline", async () => {
+    // iphone.heic records the turn twice, in its irot box and its EXIF Orientation; it must be applied once.
+    expectUprightRedOnTheRight(await analyze("iphone.heic"));
+  });
+
+  it("converts a HEIC whose only orientation is its EXIF Orientation to an upright JPEG", async () => {
+    // exif-oriented.heic has EXIF Orientation 6 and no irot box.
+    expectUprightRedOnTheRight(await analyze("exif-oriented.heic"));
   });
 
   it.each(["gradient.png", "gradient.webp"])("tells the browser to preview %s from its own copy", async (name) => {

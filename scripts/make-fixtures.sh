@@ -96,6 +96,15 @@ magick -size 64x24 xc:red -size 64x24 xc:blue -append -strip "$tmp/iphone.jpg"
   -DateTimeOriginal="2024:07:04 18:30:00" -OffsetTimeOriginal="-07:00" "$tmp/iphone.jpg"
 heif-enc -q 90 -o "$out/iphone.heic" "$tmp/iphone.jpg"
 
+# The same pixels as a HEIC with EXIF Orientation 6 but no irot box, as some
+# non-Apple encoders write it: encoded from a JPEG with no Orientation, so
+# heif-enc adds no irot, then given the EXIF Orientation afterwards. Viewed
+# upright it is portrait, red on the right.
+magick -size 64x24 xc:red -size 64x24 xc:blue -append -strip "$tmp/exif-oriented.jpg"
+heif-enc -q 90 -o "$out/exif-oriented.heic" "$tmp/exif-oriented.jpg"
+"$exiftool" -q -overwrite_original -Orientation#=6 -Make="Samsung" -Model="Galaxy S24" \
+  -DateTimeOriginal="2024:07:04 18:30:00" -OffsetTimeOriginal="-07:00" "$out/exif-oriented.heic"
+
 # Formats the browser previews itself, and formats with no preview in v1.
 magick -size 64x48 gradient:steelblue-orange -strip "$out/gradient.png"
 magick -size 64x48 gradient:steelblue-orange -strip "$out/gradient.webp"

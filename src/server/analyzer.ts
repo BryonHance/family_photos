@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
 import { previewFor } from "./preview.ts";
+import { numericValue } from "./tags.ts";
 import { deriveWarnings, STRUCTURAL_WARNINGS_ONLY } from "./warnings.ts";
 
 export type AnalyzerConfig = {
@@ -98,7 +99,10 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: type },
-    preview: await previewFor(type, photo.bytes),
+    preview: await previewFor(type, photo.bytes, {
+      exif: numericValue(tags, "EXIF:IFD0:Orientation"),
+      heifTransform: "QuickTime:Rotation" in tags || "QuickTime:Mirroring" in tags,
+    }),
     warnings: deriveWarnings(tags, photo.lastModified),
     summary: summarize(tags),
     sections,
