@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type DragEvent } from "react";
-import type { Analysis, AnalyzeError, Section } from "../shared/analysis.ts";
+import type { Analysis, AnalyzeError, Section, Summary } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -76,12 +76,63 @@ export function App() {
             {error}
           </p>
         )}
+        {opened && <SummaryCard summary={opened.analysis.summary} />}
         {opened?.analysis.sections.map((section) => (
           <SectionTable key={section.name} section={section} />
         ))}
       </div>
     </main>
   );
+}
+
+function SummaryCard({ summary }: { summary: Summary }) {
+  const headingId = useId();
+  const { exposure, location } = summary;
+  const rows: [label: string, value: string | undefined][] = [
+    ["Date taken", summary.dateTaken],
+    ["Timezone", summary.timezone ?? "unknown"],
+    ["Camera", summary.camera],
+    ["Lens", summary.lens],
+    ["Shutter speed", exposure?.shutter],
+    ["Aperture", exposure?.aperture],
+    ["ISO", exposure?.iso],
+    ["Focal length", exposure?.focalLength],
+  ];
+  return (
+    <section className="summary" aria-labelledby={headingId}>
+      <h2 id={headingId}>Summary</h2>
+      <dl>
+        {rows.map(([label, value]) =>
+          value === undefined ? null : (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ),
+        )}
+        <div>
+          <dt>Location</dt>
+          <dd>
+            {location ? (
+              <>
+                {location.latitude}, {location.longitude}{" "}
+                <a href={openStreetMapUrl(location)} target="_blank" rel="noopener noreferrer">
+                  Open in OpenStreetMap
+                </a>
+              </>
+            ) : (
+              "no location"
+            )}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+/** A plain link: no map service hears of the location until the user clicks it (ADR-0001). */
+function openStreetMapUrl({ latitude, longitude }: { latitude: number; longitude: number }) {
+  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=15/${latitude}/${longitude}`;
 }
 
 function SectionTable({ section }: { section: Section }) {

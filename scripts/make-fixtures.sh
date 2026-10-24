@@ -21,3 +21,9 @@ magick -size 64x48 gradient:steelblue-orange -strip "$out/rotated.jpg"
 
 # A one-page PDF: a real file that is not a Photo, for the 415 rejection.
 magick -size 16x16 xc:white "$out/not-a-photo.pdf"
+
+# A phone shot with a Date taken but no GPS Fields and no timezone offset.
+magick -size 64x48 gradient:seagreen-khaki -strip "$out/no-location.jpg"
+"$exiftool" -q -overwrite_original \
+  -Make="Google" -Model="Pixel 8" -DateTimeOriginal="2023:12:25 09:15:00" \
+  "$out/no-location.jpg"
