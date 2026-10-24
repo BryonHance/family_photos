@@ -1,0 +1,10 @@
+# Keep the build context to source: no dependencies, build output, or Photos.
+.git
+.pixi
+.claude
+.agents
+.github
+node_modules
+dist
+fixtures
+docs
