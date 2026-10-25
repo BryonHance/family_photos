@@ -83,6 +83,85 @@ describe("naming a Face", () => {
   });
 });
 
+describe("People", () => {
+  async function nameCrew(armstrong: string, collins: string, aldrin: string) {
+    const faces = (await api.upload("crew.jpg")).faces;
+    return {
+      armstrong: await api.nameFace(faces[0]!.id, armstrong),
+      collins: await api.nameFace(faces[1]!.id, collins),
+      aldrin: await api.nameFace(faces[2]!.id, aldrin),
+    };
+  }
+  const reopenedNames = async () => (await api.upload("crew.jpg")).faces.map((face) => face.person?.name);
+
+  it("lists each Person by name with their Face count", async () => {
+    await nameCrew("Neil", "Mike", "Neil");
+
+    expect((await api.people()).map(({ name, faceCount }) => ({ name, faceCount }))).toEqual([
+      { name: "Mike", faceCount: 1 },
+      { name: "Neil", faceCount: 2 },
+    ]);
+  });
+
+  it("renames a Person, which renames their Faces", async () => {
+    const { armstrong } = await nameCrew("Neil", "Mike", "Buzz");
+
+    expect(await api.renamePerson(armstrong.id, "Neil Armstrong")).toEqual({ id: armstrong.id, name: "Neil Armstrong" });
+
+    expect(await reopenedNames()).toEqual(["Neil Armstrong", "Mike", "Buzz"]);
+  });
+
+  it("refuses to rename a Person to another Person's name, or to nothing", async () => {
+    const { armstrong } = await nameCrew("Neil", "Mike", "Buzz");
+
+    expect((await api.call("PATCH", `/api/people/${armstrong.id}`, { name: "buzz" })).status).toBe(409);
+    expect((await api.call("PATCH", `/api/people/${armstrong.id}`, { name: "" })).status).toBe(400);
+    expect((await api.call("PATCH", "/api/people/no-such-person", { name: "Neil" })).status).toBe(404);
+    expect(await reopenedNames()).toEqual(["Neil", "Mike", "Buzz"]);
+  });
+
+  it("merges one Person into another, moving their Faces", async () => {
+    const { armstrong, aldrin } = await nameCrew("Sam", "Mike", "Sam (baby)");
+
+    await api.mergePeople(aldrin.id, armstrong.id);
+
+    expect(await reopenedNames()).toEqual(["Sam", "Mike", "Sam"]);
+    expect((await api.people()).map(({ name, faceCount }) => [name, faceCount])).toEqual([
+      ["Mike", 1],
+      ["Sam", 2],
+    ]);
+  });
+
+  it("refuses to merge a Person into themselves or someone unknown", async () => {
+    const { armstrong } = await nameCrew("Neil", "Mike", "Buzz");
+
+    expect((await api.call("POST", `/api/people/${armstrong.id}/merge`, { into: armstrong.id })).status).toBe(400);
+    expect((await api.call("POST", `/api/people/${armstrong.id}/merge`, { into: "nobody" })).status).toBe(404);
+    expect(await api.people()).toHaveLength(3);
+  });
+
+  it("deletes a Person, leaving their Faces unnamed", async () => {
+    const { collins } = await nameCrew("Neil", "Mike", "Buzz");
+
+    await api.deletePerson(collins.id);
+
+    expect(await reopenedNames()).toEqual(["Neil", undefined, "Buzz"]);
+    expect((await api.people()).map((p) => p.name)).toEqual(["Buzz", "Neil"]);
+    expect((await api.call("DELETE", `/api/people/${collins.id}`)).status).toBe(404);
+  });
+
+  it('"Delete all face data" leaves faces.db empty', async () => {
+    const faces = (await api.upload("crew.jpg")).faces;
+    await api.nameFace(faces[0]!.id, "Neil");
+    await api.markNotAFace(faces[1]!.id);
+
+    await api.deleteAllFaceData();
+
+    expect(api.storedRows()).toEqual({ people: [], faces: [] });
+    expect(await api.people()).toEqual([]);
+  });
+});
+
 describe('"Not a face"', () => {
   it("hides the Face on reopening and keeps only its box and the Photo hash", async () => {
     const [armstrong, collins, aldrin] = (await api.upload("crew.jpg")).faces;

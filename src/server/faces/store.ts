@@ -84,6 +84,11 @@ export function openFaceStore(path: string) {
   );
   const findPersonByName = db.prepare("SELECT id, name FROM people WHERE name = ?");
   const insertPerson = db.prepare("INSERT INTO people (id, name) VALUES (?, ?)");
+  const findPerson = db.prepare("SELECT id FROM people WHERE id = ?");
+  const renamePerson = db.prepare("UPDATE people SET name = ? WHERE id = ?");
+  const movePersonFaces = db.prepare("UPDATE faces SET person_id = ? WHERE person_id = ?");
+  // Their Faces are left unnamed by ON DELETE SET NULL.
+  const deletePerson = db.prepare("DELETE FROM people WHERE id = ?");
   const listPeople = db.prepare(`
     SELECT people.id, people.name, COUNT(faces.id) AS faceCount
     FROM people LEFT JOIN faces ON faces.person_id = people.id
@@ -167,6 +172,44 @@ export function openFaceStore(path: string) {
 
     /** Every Person, by name, with how many Faces are named as them. */
     people: () => listPeople.all() as PersonSummary[],
+
+    /** "taken" when another Person already has the name, ignoring case. */
+    renamePerson(personId: string, name: string): PersonRef | "not-found" | "taken" {
+      return transaction(() => {
+        if (!findPerson.get(personId)) return "not-found";
+        const holder = findPersonByName.get(name) as PersonRef | undefined;
+        if (holder && holder.id !== personId) return "taken";
+        renamePerson.run(name, personId);
+        return { id: personId, name };
+      });
+    },
+
+    /** Names every Face of `personId` as `intoPersonId` instead, then deletes `personId`. */
+    mergePeople(personId: string, intoPersonId: string): "merged" | "not-found" | "same" {
+      if (personId === intoPersonId) return "same";
+      return transaction(() => {
+        if (!findPerson.get(personId) || !findPerson.get(intoPersonId)) return "not-found";
+        movePersonFaces.run(intoPersonId, personId);
+        deletePerson.run(personId);
+        return "merged";
+      });
+    },
+
+    /** Deletes a Person; their Faces stay stored, unnamed. False when there is no such Person. */
+    deletePerson: (personId: string): boolean => deletePerson.run(personId).changes > 0,
+
+    /**
+     * Deletes every Face and Person, then rewrites the file so that no deleted
+     * embedding lingers in its free pages or its write-ahead log.
+     */
+    deleteAllFaceData() {
+      transaction(() => {
+        db.exec("DELETE FROM faces");
+        db.exec("DELETE FROM people");
+      });
+      db.exec("VACUUM");
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    },
 
     close: () => db.close(),
   };

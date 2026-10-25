@@ -27,6 +27,34 @@ export function faceRoutes(store: FaceStore) {
 
   app.get("/people", (c) => c.json<{ people: PersonSummary[] }>({ people: store.people() }));
 
+  app.patch("/people/:id", async (c) => {
+    const name = await nameIn(c);
+    if (!name) return noName(c);
+    const result = store.renamePerson(c.req.param("id"), name);
+    if (result === "not-found") return noSuchPerson(c);
+    if (result === "taken") {
+      return c.json({ error: { message: `Someone is already called ${name}. Merge them instead.` } }, 409);
+    }
+    return c.json<PersonRef>(result);
+  });
+
+  app.post("/people/:id/merge", async (c) => {
+    const body: unknown = await c.req.json().catch(() => undefined);
+    const into = typeof body === "object" && body !== null && "into" in body ? body.into : undefined;
+    if (typeof into !== "string") return problem(c, 400, "Say which Person to merge into.");
+    const result = store.mergePeople(c.req.param("id"), into);
+    if (result === "same") return problem(c, 400, "A Person cannot be merged into themselves.");
+    if (result === "not-found") return noSuchPerson(c);
+    return c.body(null, 204);
+  });
+
+  app.delete("/people/:id", (c) => (store.deletePerson(c.req.param("id")) ? c.body(null, 204) : noSuchPerson(c)));
+
+  app.delete("/face-data", (c) => {
+    store.deleteAllFaceData();
+    return c.body(null, 204);
+  });
+
   return app;
 }
 
