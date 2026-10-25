@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
-import type { Analysis, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
+import type { Analysis, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import { previewFor } from "./preview.ts";
 import {
   DATE_TAKEN,
@@ -21,6 +22,8 @@ export type AnalyzerConfig = {
   exiftool: ExifTool;
   /** Where a Photo sits while ExifTool reads it. Emptied after every analysis (ADR-0001). */
   tempDir: string;
+  /** Finds the Faces in each Photo. Nothing about them is kept. */
+  faceDetector: FaceDetector;
 };
 
 export type PhotoUpload = {
@@ -172,7 +175,18 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     warnings: deriveWarnings(tags, sections, photo.lastModified),
     summary: summarize(tags),
     sections,
+    faces: await findFaces(config.faceDetector, photoMimeType, photo.bytes),
   };
+}
+
+/** Formats sharp decodes, turning them upright by their EXIF Orientation. */
+const SHARP_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+/** TIFF and RAW get no Faces. */
+async function findFaces(detector: FaceDetector, mimeType: string, bytes: Uint8Array): Promise<Face[]> {
+  if (!SHARP_TYPES.has(mimeType)) return [];
+  const faces = await detector.detect({ kind: "encoded", bytes });
+  return faces.map(({ box }) => ({ box }));
 }
 
 /**
