@@ -4,6 +4,9 @@ import type { Face, PersonRef, PersonSummary } from "../shared/analysis.ts";
 /** A face route refused the request; the message is the server's, ready to show. */
 export class FaceApiError extends Error {}
 
+/** What to show the user for a failed request. */
+export const messageOf = (failure: unknown): string => (failure instanceof Error ? failure.message : String(failure));
+
 async function send(method: string, url: string, body?: unknown): Promise<Response> {
   let res: Response;
   try {

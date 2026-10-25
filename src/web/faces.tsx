@@ -1,20 +1,49 @@
 import { useId, useState } from "react";
-import type { Face, PersonRef, PersonSummary } from "../shared/analysis.ts";
+import type { Face, PersonRef, PersonSummary, StrangerRef } from "../shared/analysis.ts";
+import { messageOf } from "./faceApi.ts";
+
+/** Who a Face shows, as far as the viewer knows: exactly one of these. */
+type Who =
+  | { state: "named"; person: PersonRef }
+  | { state: "suggested"; person: PersonRef }
+  | { state: "stranger"; stranger: StrangerRef }
+  | { state: "unknown" };
+
+function whoIs(face: Face): Who {
+  if (face.person) return { state: "named", person: face.person };
+  if (face.suggestion) return { state: "suggested", person: face.suggestion };
+  if (face.stranger) return { state: "stranger", stranger: face.stranger };
+  return { state: "unknown" };
+}
 
 /** What a Face's box says about who it shows: their name, a Suggestion, or a Stranger. */
-function whoLabel(face: Face): string | undefined {
-  if (face.person) return face.person.name;
-  if (face.suggestion) return `${face.suggestion.name}?`;
-  if (face.stranger) return `${face.stranger.label}, in ${face.stranger.photoCount} Photos`;
-  return undefined;
+function whoLabel(who: Who): string | undefined {
+  switch (who.state) {
+    case "named":
+      return who.person.name;
+    case "suggested":
+      return `${who.person.name}?`;
+    case "stranger":
+      return `${who.stranger.label}, in ${who.stranger.photoCount} Photos`;
+    case "unknown":
+      return undefined;
+  }
 }
 
 /** "Face 2", "Face 1: Neil", "Face 3: Neil? (suggested)" or "Face 4: Unknown 2, in 3 Photos". */
 export function faceLabel(face: Face, index: number): string {
-  const who = whoLabel(face);
-  if (who === undefined) return `Face ${index + 1}`;
-  return `Face ${index + 1}: ${who}${face.suggestion ? " (suggested)" : ""}`;
+  const who = whoIs(face);
+  const label = whoLabel(who);
+  if (label === undefined) return `Face ${index + 1}`;
+  return `Face ${index + 1}: ${label}${who.state === "suggested" ? " (suggested)" : ""}`;
 }
+
+const BOX_CLASS: Record<Who["state"], string> = {
+  named: "face-box",
+  suggested: "face-box suggested",
+  stranger: "face-box stranger",
+  unknown: "face-box",
+};
 
 /**
  * A numbered box over each Face, placed by its fractions of the upright Photo,
@@ -36,36 +65,40 @@ export function FaceBoxes({
 }) {
   return (
     <ol className="face-boxes" aria-label="Face boxes">
-      {faces.map((face, i) => (
-        <li
-          key={face.id}
-          className={face.suggestion ? "face-box suggested" : face.stranger ? "face-box stranger" : "face-box"}
-          style={{
-            left: `${face.box.x * 100}%`,
-            top: `${face.box.y * 100}%`,
-            width: `${face.box.width * 100}%`,
-            height: `${face.box.height * 100}%`,
-          }}
-        >
-          <button
-            type="button"
-            aria-label={faceLabel(face, i)}
-            aria-pressed={face.id === selectedFaceId}
-            onClick={() => onSelect(face.id)}
+      {faces.map((face, i) => {
+        const who = whoIs(face);
+        const label = whoLabel(who);
+        return (
+          <li
+            key={face.id}
+            className={BOX_CLASS[who.state]}
+            style={{
+              left: `${face.box.x * 100}%`,
+              top: `${face.box.y * 100}%`,
+              width: `${face.box.width * 100}%`,
+              height: `${face.box.height * 100}%`,
+            }}
           >
-            <span className="face-number">{i + 1}</span>
-            {whoLabel(face) !== undefined && <span className="face-name">{whoLabel(face)}</span>}
-          </button>
-          {face.suggestion && (
-            <SuggestionButtons
-              number={i + 1}
-              person={face.suggestion}
-              onConfirm={() => onConfirm(face.id, face.suggestion!)}
-              onReject={() => onReject(face.id, face.suggestion!)}
-            />
-          )}
-        </li>
-      ))}
+            <button
+              type="button"
+              aria-label={faceLabel(face, i)}
+              aria-pressed={face.id === selectedFaceId}
+              onClick={() => onSelect(face.id)}
+            >
+              <span className="face-number">{i + 1}</span>
+              {label !== undefined && <span className="face-name">{label}</span>}
+            </button>
+            {who.state === "suggested" && (
+              <SuggestionButtons
+                number={i + 1}
+                person={who.person}
+                onConfirm={() => onConfirm(face.id, who.person)}
+                onReject={() => onReject(face.id, who.person)}
+              />
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -200,7 +233,7 @@ function FaceForm({
     try {
       await action();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(messageOf(failure));
     } finally {
       setBusy(false);
     }

@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { PersonRef, PersonSummary } from "../shared/analysis.ts";
-import { faceApi } from "./faceApi.ts";
+import { faceApi, messageOf } from "./faceApi.ts";
 
 /** A change made in the People panel, which the opened Photo's names must follow. */
 export type PeopleChange =
@@ -34,7 +34,7 @@ export function PeoplePanel({
     try {
       onChanged(await action());
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(messageOf(failure));
     }
   }
 
