@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
 import { iou } from "./overlap.ts";
+import { cosine } from "./similarity.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
@@ -501,12 +502,6 @@ function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFa
 
 /** The embedding a BLOB holds: 512 float32s, copied so that its alignment does not matter. */
 const embeddingOf = (blob: Uint8Array) => new Float32Array(new Uint8Array(blob).buffer);
-
-function cosine(a: Float32Array, b: Float32Array): number {
-  let dot = 0;
-  for (let i = 0; i < a.length; i++) dot += a[i]! * b[i]!;
-  return dot; // Both are L2-normalised.
-}
 
 const boxOf = (r: FaceRow): Box => ({ x: r.box_x, y: r.box_y, width: r.box_width, height: r.box_height });
 

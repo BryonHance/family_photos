@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import { cosine } from "./faces/similarity.ts";
 import { openFaceStore } from "./faces/store.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
@@ -93,7 +94,6 @@ describe("Faces", () => {
 describe("Face embeddings", () => {
   const detectFixture = async (name: string) =>
     faceDetector.detect({ kind: "encoded", bytes: await readFile(fixture(name)) });
-  const cosine = (a: Float32Array, b: Float32Array) => a.reduce((sum, v, i) => sum + v * b[i]!, 0);
 
   it("gives each Face a unit-length 512-number embedding", async () => {
     const faces = await detectFixture("crew.jpg");
