@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
@@ -159,6 +160,67 @@ describe("People", () => {
 
     expect(api.storedRows()).toEqual({ people: [], faces: [] });
     expect(await api.people()).toEqual([]);
+  });
+});
+
+describe("a Photo stored under an older model version", () => {
+  /** The real models standing in for an older version whose boxes sit `shift` box-widths to the right. */
+  const olderModel = (shift: number): FaceDetector => ({
+    modelVersion: "older-model",
+    detect: async (photo) =>
+      (await faceDetector.detect(photo)).map((face) => ({
+        ...face,
+        box: { ...face.box, x: face.box.x + shift * face.box.width },
+      })),
+  });
+
+  it("is detected again, and each new Face keeps the Person or mark of the old box it mostly overlaps", async () => {
+    const old = (await api.upload("crew.jpg", { detector: olderModel(0.15) })).faces;
+    await api.nameFace(old[0]!.id, "Neil");
+    await api.markNotAFace(old[1]!.id);
+
+    const reopened = (await api.upload("crew.jpg")).faces;
+
+    expect(reopened).toHaveLength(2);
+    expect(reopened.map((face) => face.person?.name)).toEqual(["Neil", undefined]);
+    expect(reopened.map((face) => face.id)).not.toContain(old[0]!.id);
+    expect(reopened[0]!.box.x).toBeLessThan(old[0]!.box.x);
+    // The old Faces are replaced, not kept beside the new ones.
+    const rows = api.storedRows()["faces"]!;
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row["model_version"]).filter((v) => v !== null)).toEqual([
+      faceDetector.modelVersion,
+      faceDetector.modelVersion,
+    ]);
+    expect(await api.upload("crew.jpg")).toMatchObject({ faces: reopened });
+  });
+
+  it("leaves a new Face unnamed when no old box mostly overlaps it", async () => {
+    const old = (await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces;
+    await api.nameFace(old[0]!.id, "Neil");
+
+    const reopened = (await api.upload("crew.jpg")).faces;
+
+    expect(reopened.map((face) => face.person)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("what is kept (ADR-0001, ADR-0002)", () => {
+  it("keeps neither the Photo nor any image of a Face, only embeddings, boxes and the Photo's hash", async () => {
+    const faces = (await api.upload("crew.jpg")).faces;
+    await api.nameFace(faces[0]!.id, "Neil");
+    await api.upload("crew-oriented.heic");
+
+    expect(await readdir(api.tempDir)).toEqual([]);
+    const rows = api.storedRows()["faces"]!;
+    expect(rows).toHaveLength(6);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(
+        ["box_height", "box_width", "box_x", "box_y", "embedding", "id", "model_version", "not_a_face", "person_id", "photo_sha256"],
+      );
+      // 512 float32s: an embedding, not pixels.
+      expect((row["embedding"] as Uint8Array).byteLength).toBe(512 * 4);
+    }
   });
 });
 
