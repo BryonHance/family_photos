@@ -14,7 +14,7 @@ Recognising a Person in many Photos means remembering their Faces between reques
 
 ## Consequences
 
-- Face data is kept in one store on the personal server, separate from everything else, so it can be wiped in one step. Deleting a Person deletes their Faces' embeddings, and the user can delete all face data at once.
+- Face data is kept in one store on the personal server, separate from everything else, so it can be wiped in one step. Deleting a Person removes the name but keeps their Faces' embeddings: the Faces become unnamed and join Strangers again, so a misnamed Person can be fixed without reopening every Photo. To remove embeddings, the user marks a Face "Not a face" or deletes all face data at once.
 - Face data is kept out of any backup that leaves the server. Losing the server means re-opening Photos to recognise each Person again.
 - The Photo hash lets the viewer recognise a Photo it has seen before without keeping it; it reveals nothing about the Photo's contents to anyone without the file.
 - With no login (ADR-0001), anyone on the home network or VPN can see and change which Person is named in a Photo. Adding authentication first is still required before any public exposure.
