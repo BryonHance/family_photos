@@ -465,3 +465,61 @@ it("shows a placeholder instead of a preview when a Photo has no preview", async
   expect(screen.queryByRole("img")).not.toBeInTheDocument();
   expect(screen.getByRole("region", { name: "EXIF" })).toBeInTheDocument();
 });
+
+const withFaces: Analysis = {
+  ...analysis,
+  faces: [
+    { box: { x: 0.1, y: 0.2, width: 0.15, height: 0.25 } },
+    { box: { x: 0.6, y: 0.3, width: 0.1, height: 0.2 } },
+  ],
+};
+
+async function openPhotoWithFaces() {
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json(withFaces));
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  await screen.findByRole("img", { name: "beach.jpg" });
+}
+
+it("draws a numbered box over the preview for each Face, placed by its fractions of the Photo", async () => {
+  await openPhotoWithFaces();
+
+  const boxes = within(screen.getByRole("list", { name: "Face boxes" })).getAllByRole("listitem");
+  expect(boxes.map((box) => box.textContent)).toEqual(["1", "2"]);
+  expect(boxes[0]).toHaveStyle({ left: "10%", top: "20%", width: "15%", height: "25%" });
+  expect(boxes[1]).toHaveStyle({ left: "60%", top: "30%", width: "10%", height: "20%" });
+});
+
+it("heads the panel's Faces with their count, above the Summary", async () => {
+  await openPhotoWithFaces();
+
+  const faces = screen.getByRole("region", { name: "Faces (2)" });
+  const summary = screen.getByRole("region", { name: "Summary" });
+  expect(faces.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("hides the Face boxes when Show boxes is turned off, and shows them again when it is turned on", async () => {
+  await openPhotoWithFaces();
+  const toggle = within(screen.getByRole("region", { name: "Faces (2)" })).getByRole("checkbox", { name: "Show boxes" });
+  expect(toggle).toBeChecked();
+
+  await userEvent.click(toggle);
+
+  expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "beach.jpg" })).toBeInTheDocument();
+
+  await userEvent.click(toggle);
+
+  expect(screen.getByRole("list", { name: "Face boxes" })).toBeInTheDocument();
+});
+
+it("shows no Faces heading, toggle or boxes when a Photo has no Faces", async () => {
+  render(<App />);
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+
+  await screen.findByRole("region", { name: "Summary" });
+  expect(screen.queryByRole("region", { name: /faces/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Show boxes" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
+});

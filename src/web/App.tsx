@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
-import type { Analysis, AnalyzeError, Field, Section, Summary, Warning } from "../shared/analysis.ts";
+import type { Analysis, AnalyzeError, Face, Field, Section, Summary, Warning } from "../shared/analysis.ts";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -13,6 +13,8 @@ type ViewerState =
 export function App() {
   const [state, setState] = useState<ViewerState>({ status: "empty" });
   const [filter, setFilter] = useState("");
+  // Kept across Photos, like the filter, so hiding the boxes once keeps them hidden.
+  const [showBoxes, setShowBoxes] = useState(true);
   // The request for the Photo opened most recently. Opening another aborts it, so
   // a slower response for an earlier Photo can never replace a later one.
   const request = useRef<AbortController | null>(null);
@@ -66,7 +68,7 @@ export function App() {
       onDrop={onDrop}
     >
       <div className="photo">
-        {state.status === "opened" ? <PhotoPreview {...state} /> : <p className="hint">Drop a Photo here</p>}
+        {state.status === "opened" ? <PhotoPreview {...state} showBoxes={showBoxes} /> : <p className="hint">Drop a Photo here</p>}
         <label className="picker">
           Choose a Photo
           <input
@@ -93,26 +95,39 @@ export function App() {
           </p>
         )}
         {state.status === "opened" && (
-          <OpenedPhotoPanel analysis={state.analysis} filter={filter} onFilterChange={setFilter} />
+          <OpenedPhotoPanel
+            analysis={state.analysis}
+            filter={filter}
+            onFilterChange={setFilter}
+            showBoxes={showBoxes}
+            onShowBoxesChange={setShowBoxes}
+          />
         )}
       </div>
     </main>
   );
 }
 
-/** The panel for an opened Photo: Warnings, Summary, the filter box, then its Sections. */
+/** The panel for an opened Photo: Warnings, Faces, Summary, the filter box, then its Sections. */
 function OpenedPhotoPanel({
   analysis,
   filter,
   onFilterChange,
+  showBoxes,
+  onShowBoxesChange,
 }: {
   analysis: Analysis;
   filter: string;
   onFilterChange: (filter: string) => void;
+  showBoxes: boolean;
+  onShowBoxesChange: (show: boolean) => void;
 }) {
   return (
     <>
       {analysis.warnings.length > 0 && <Warnings warnings={analysis.warnings} />}
+      {analysis.faces.length > 0 && (
+        <FacesHeading count={analysis.faces.length} showBoxes={showBoxes} onShowBoxesChange={onShowBoxesChange} />
+      )}
       <SummaryCard summary={analysis.summary} />
       <input
         type="search"
@@ -129,13 +144,19 @@ function OpenedPhotoPanel({
   );
 }
 
-function PhotoPreview({ analysis, previewUrl }: Opened) {
-  const { preview, photo } = analysis;
+function PhotoPreview({ analysis, previewUrl, showBoxes }: Opened & { showBoxes: boolean }) {
+  const { preview, photo, faces } = analysis;
+  const framed = (src: string) => (
+    <div className="preview-frame">
+      <img src={src} alt={photo.name} />
+      {showBoxes && faces.length > 0 && <FaceBoxes faces={faces} />}
+    </div>
+  );
   switch (preview.kind) {
     case "client":
-      return <img src={previewUrl} alt={photo.name} />;
+      return framed(previewUrl);
     case "converted":
-      return <img src={`data:${preview.mimeType};base64,${preview.base64}`} alt={photo.name} />;
+      return framed(`data:${preview.mimeType};base64,${preview.base64}`);
     case "none":
       return (
         <p className="no-preview">
@@ -143,6 +164,49 @@ function PhotoPreview({ analysis, previewUrl }: Opened) {
         </p>
       );
   }
+}
+
+/** A numbered box over each Face, placed by its fractions of the upright Photo, which the preview shows. */
+function FaceBoxes({ faces }: { faces: Face[] }) {
+  return (
+    <ol className="face-boxes" aria-label="Face boxes">
+      {faces.map(({ box }, i) => (
+        <li
+          key={i}
+          className="face-box"
+          style={{
+            left: `${box.x * 100}%`,
+            top: `${box.y * 100}%`,
+            width: `${box.width * 100}%`,
+            height: `${box.height * 100}%`,
+          }}
+        >
+          <span>{i + 1}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function FacesHeading({
+  count,
+  showBoxes,
+  onShowBoxesChange,
+}: {
+  count: number;
+  showBoxes: boolean;
+  onShowBoxesChange: (show: boolean) => void;
+}) {
+  const headingId = useId();
+  return (
+    <section className="faces" aria-labelledby={headingId}>
+      <h2 id={headingId}>Faces ({count})</h2>
+      <label>
+        <input type="checkbox" checked={showBoxes} onChange={(event) => onShowBoxesChange(event.target.checked)} />
+        Show boxes
+      </label>
+    </section>
+  );
 }
 
 function Warnings({ warnings }: { warnings: Warning[] }) {
