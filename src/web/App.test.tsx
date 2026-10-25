@@ -637,3 +637,32 @@ it("starts the name field with the Face's current name", async () => {
 
   expect(screen.getByRole("combobox", { name: "Name" })).toHaveValue("Neil");
 });
+
+it('removes a box marked "Not a face" and renumbers the rest', async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.click(screen.getByRole("button", { name: "Not a face" }));
+
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/faces/face-b/not-a-face", body: undefined });
+  await screen.findByRole("region", { name: "Faces (2)" });
+  const boxes = within(screen.getByRole("list", { name: "Face boxes" })).getAllByRole("button");
+  expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual(["Face 1: Neil", "Face 2"]);
+});
+
+it("shows the server's message when a Face can no longer be named", async () => {
+  fakeFaceServer(crew, crewPeople());
+  await openCrew();
+  vi.mocked(fetch).mockImplementation(async (input) =>
+    String(input) === "/api/people"
+      ? Response.json({ people: [] })
+      : Response.json({ error: { message: "This Face is no longer stored. Open the Photo again." } }, { status: 404 }),
+  );
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Mike{Enter}");
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("This Face is no longer stored. Open the Photo again.");
+  expect(faceBox("Face 2")).toBeInTheDocument();
+});
