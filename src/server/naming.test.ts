@@ -233,6 +233,8 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
 describe('"Not a face"', () => {
   it("hides the Face on reopening and keeps only its box and the Photo hash", async () => {
     const [armstrong, collins, aldrin] = (await api.upload("crew.jpg")).faces;
+    const buzz = await api.nameFace(aldrin!.id, "Buzz");
+    await api.rejectSuggestion(collins!.id, buzz.id);
     await api.nameFace(collins!.id, "Michael Collins");
 
     await api.markNotAFace(collins!.id);
@@ -244,7 +246,12 @@ describe('"Not a face"', () => {
     expect(dismissed["embedding"]).toBeNull();
     expect(dismissed["person_id"]).toBeNull();
     expect(dismissed["photo_sha256"]).toMatch(/^[0-9a-f]{64}$/);
-    expect(await api.people()).toEqual([expect.objectContaining({ name: "Michael Collins", faceCount: 0 })]);
+    // Nor any rejected Suggestion.
+    expect(api.storedRows()["rejected_suggestions"]!.filter((row) => row["face_id"] === collins!.id)).toEqual([]);
+    expect((await api.people()).map(({ name, faceCount }) => [name, faceCount])).toEqual([
+      ["Buzz", 1],
+      ["Michael Collins", 0],
+    ]);
   });
 
   it("cannot then be named", async () => {

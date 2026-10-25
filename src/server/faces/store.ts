@@ -11,7 +11,7 @@ import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
  * of off-server backups.
  *
  * A Face marked "Not a face" keeps only its box and the Photo's hash: its
- * embedding, Person and model version are cleared.
+ * embedding, Person, Stranger, model version and rejected Suggestions are cleared.
  *
  * Each rejected Suggestion is kept as the pair of Face and Person, so that it
  * is never suggested again. A Stranger is only a number: its Faces point to it.
@@ -170,6 +170,7 @@ export function openFaceStore(path: string) {
     FROM rejected_suggestions JOIN faces ON faces.id = rejected_suggestions.face_id
     WHERE photo_sha256 = ?`);
   const rejectSuggestion = db.prepare("INSERT OR IGNORE INTO rejected_suggestions (face_id, person_id) VALUES (?, ?)");
+  const forgetRejections = db.prepare("DELETE FROM rejected_suggestions WHERE face_id = ?");
   const photoOfFace = db.prepare("SELECT photo_sha256 FROM faces WHERE id = ? AND not_a_face = 0");
   const findPersonById = db.prepare("SELECT id, name FROM people WHERE id = ?");
 
@@ -378,6 +379,7 @@ export function openFaceStore(path: string) {
     markNotAFace(faceId: string): boolean {
       return transaction(() => {
         const marked = markNotAFace.run(faceId).changes > 0;
+        forgetRejections.run(faceId);
         deleteEmptyStrangers.run();
         return marked;
       });
