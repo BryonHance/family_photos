@@ -79,6 +79,9 @@ export function openFaceStore(path: string) {
   const deleteFacesOfPhoto = db.prepare("DELETE FROM faces WHERE photo_sha256 = ?");
   const findFace = db.prepare("SELECT not_a_face FROM faces WHERE id = ?");
   const setPersonOfFace = db.prepare("UPDATE faces SET person_id = ? WHERE id = ?");
+  const markNotAFace = db.prepare(
+    "UPDATE faces SET not_a_face = 1, embedding = NULL, person_id = NULL, model_version = NULL WHERE id = ?",
+  );
   const findPersonByName = db.prepare("SELECT id, name FROM people WHERE name = ?");
   const insertPerson = db.prepare("INSERT INTO people (id, name) VALUES (?, ?)");
   const listPeople = db.prepare(`
@@ -155,6 +158,12 @@ export function openFaceStore(path: string) {
         return person;
       });
     },
+
+    /**
+     * Marks a Face "Not a face": it keeps only its box and the Photo's hash, and
+     * stays hidden whenever the Photo is reopened. False when there is no such Face.
+     */
+    markNotAFace: (faceId: string): boolean => markNotAFace.run(faceId).changes > 0,
 
     /** Every Person, by name, with how many Faces are named as them. */
     people: () => listPeople.all() as PersonSummary[],

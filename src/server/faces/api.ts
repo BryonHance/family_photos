@@ -21,6 +21,10 @@ export function faceRoutes(store: FaceStore) {
     return person ? c.json<PersonRef>(person) : noSuchFace(c);
   });
 
+  app.post("/faces/:id/not-a-face", (c) =>
+    store.markNotAFace(c.req.param("id")) ? c.body(null, 204) : noSuchFace(c),
+  );
+
   app.get("/people", (c) => c.json<{ people: PersonSummary[] }>({ people: store.people() }));
 
   return app;

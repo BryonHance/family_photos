@@ -82,3 +82,29 @@ describe("naming a Face", () => {
     expect(await api.people()).toEqual([]);
   });
 });
+
+describe('"Not a face"', () => {
+  it("hides the Face on reopening and keeps only its box and the Photo hash", async () => {
+    const [armstrong, collins, aldrin] = (await api.upload("crew.jpg")).faces;
+    await api.nameFace(collins!.id, "Michael Collins");
+
+    await api.markNotAFace(collins!.id);
+
+    expect((await api.upload("crew.jpg")).faces.map((face) => face.id)).toEqual([armstrong!.id, aldrin!.id]);
+    const rows = api.storedRows()["faces"]!;
+    expect(rows).toHaveLength(3);
+    const dismissed = rows.find((row) => row["id"] === collins!.id)!;
+    expect(dismissed["embedding"]).toBeNull();
+    expect(dismissed["person_id"]).toBeNull();
+    expect(dismissed["photo_sha256"]).toMatch(/^[0-9a-f]{64}$/);
+    expect(await api.people()).toEqual([expect.objectContaining({ name: "Michael Collins", faceCount: 0 })]);
+  });
+
+  it("cannot then be named", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    await api.markNotAFace(armstrong!.id);
+
+    expect((await api.call("PUT", `/api/faces/${armstrong!.id}/person`, { name: "Neil" })).status).toBe(404);
+    expect((await api.call("POST", "/api/faces/no-such-face/not-a-face")).status).toBe(404);
+  });
+});
