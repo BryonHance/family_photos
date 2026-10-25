@@ -151,6 +151,62 @@ describe("Strangers", () => {
     expect(strangerLabels(rotated).slice(1)).toEqual(strangerLabels(before).slice(1));
   });
 
+  describe("a chain of look-alikes", () => {
+    /**
+     * The real models finding the first Face of a Photo, standing in an
+     * embedding `degrees` round a circle: Faces 40° apart are alike (cosine
+     * 0.77), Faces 80° apart are not (0.17). The fixtures' real Faces are either
+     * near-identical or wholly unlike, so they cannot make a chain.
+     */
+    const firstFaceAt = (degrees: number): FaceDetector => ({
+      modelVersion: faceDetector.modelVersion,
+      detect: async (photo) => {
+        const [face] = await faceDetector.detect(photo);
+        const embedding = new Float32Array(512);
+        embedding[0] = Math.cos((degrees * Math.PI) / 180);
+        embedding[1] = Math.sin((degrees * Math.PI) / 180);
+        return [{ ...face!, embedding }];
+      },
+    });
+
+    /** Three Photos, one Face each: A is like B, B is like C, A is not like C. */
+    async function uploadChain() {
+      const [a] = (await api.upload("crew.jpg", { detector: firstFaceAt(0) })).faces;
+      const [b] = (await api.upload("crew-rotated.jpg", { detector: firstFaceAt(40) })).faces;
+      const [c] = (await api.upload("armstrong-twice.jpg", { detector: firstFaceAt(80) })).faces;
+      return { a: a!, b: b!, c: c! };
+    }
+    const reopen = async (fixtureName: string) => (await api.upload(fixtureName)).faces[0]!;
+
+    it("is one Stranger", async () => {
+      const { c } = await uploadChain();
+
+      expect(c.stranger?.photoCount).toBe(3);
+      expect((await reopen("crew.jpg")).stranger).toEqual(c.stranger);
+    });
+
+    it("naming one Face of a Stranger suggests that Person for the rest, even the unlike ones", async () => {
+      const { a } = await uploadChain();
+
+      const neil = await api.nameFace(a.id, "Neil");
+
+      expect((await reopen("crew-rotated.jpg")).suggestion).toEqual(neil);
+      expect((await reopen("armstrong-twice.jpg")).suggestion).toEqual(neil);
+    });
+
+    it("rejecting that Suggestion takes the Face out of the Stranger", async () => {
+      const { a, c } = await uploadChain();
+      const neil = await api.nameFace(a.id, "Neil");
+
+      const afterRejecting = await api.rejectSuggestion(c.id, neil.id);
+
+      // Still in the Stranger, it would show "in 2 Photos" (B and C); alone, it shows no label.
+      expect(afterRejecting).toEqual({ id: c.id, box: c.box });
+      expect(await reopen("armstrong-twice.jpg")).toEqual(afterRejecting);
+      expect((await reopen("crew-rotated.jpg")).suggestion).toEqual(neil);
+    });
+  });
+
   it("a Stranger left with Faces in one Photo shows no label", async () => {
     const [, collins] = (await api.upload("crew.jpg")).faces;
     await api.upload("crew-rotated.jpg");

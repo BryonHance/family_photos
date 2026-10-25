@@ -85,7 +85,13 @@ type EmbeddingRow = {
   person_id: string | null;
   stranger_id: number | null;
 };
-type NamedRow = { photo_sha256: string; embedding: Uint8Array; person_id: string; person_name: string };
+type NamedRow = {
+  photo_sha256: string;
+  embedding: Uint8Array;
+  person_id: string;
+  stranger_id: number | null;
+  person_name: string;
+};
 
 /** Opens (or creates) faces.db at `path`; `":memory:"` keeps it in memory. */
 export function openFaceStore(path: string) {
@@ -131,7 +137,7 @@ export function openFaceStore(path: string) {
 
   // Every named Face's embedding, for Suggestions: a plain scan, no vector index (spec #12).
   const namedFaces = db.prepare(`
-    SELECT photo_sha256, embedding, person_id, people.name AS person_name
+    SELECT photo_sha256, embedding, person_id, stranger_id, people.name AS person_name
     FROM faces JOIN people ON people.id = faces.person_id
     WHERE model_version = ?`);
   const embeddingsOfPhoto = db.prepare(
@@ -151,6 +157,9 @@ export function openFaceStore(path: string) {
     WHERE face.photo_sha256 = ? AND named.stranger_id IS NOT NULL`);
   const photosOfPerson = db.prepare("SELECT DISTINCT photo_sha256 FROM faces WHERE person_id = ?");
   const leaveStrangers = db.prepare("UPDATE faces SET stranger_id = NULL WHERE person_id = ?");
+  const leaveStrangerOfPerson = db.prepare(`
+    UPDATE faces SET stranger_id = NULL
+    WHERE id = ?1 AND stranger_id IN (SELECT stranger_id FROM faces WHERE person_id = ?2)`);
   const newStranger = db.prepare("INSERT INTO strangers DEFAULT VALUES");
   const setStrangerOfFace = db.prepare("UPDATE faces SET stranger_id = ? WHERE id = ?");
   const deleteEmptyStrangers = db.prepare(
@@ -224,8 +233,9 @@ export function openFaceStore(path: string) {
 
   /**
    * Each unnamed Face's Suggestion: the Person of its nearest named Face in
-   * another Photo, at or above SUGGESTION_THRESHOLD, unless the Face's user
-   * rejected that Person for it. A Person already named in this Photo is not
+   * another Photo, at or above SUGGESTION_THRESHOLD, or the Person of a named
+   * Face of its Stranger however alike they are; unless the user rejected that
+   * Person for it. A Person already named in this Photo is not
    * suggested, and no two Faces of one Photo are suggested as the same Person:
    * the closest pairs are matched first.
    */
@@ -238,7 +248,11 @@ export function openFaceStore(path: string) {
     const namedHere = new Set(own.map((face) => face.person_id));
     const named = (namedFaces.all(modelVersion) as NamedRow[])
       .filter((row) => row.photo_sha256 !== sha256 && !namedHere.has(row.person_id))
-      .map((row) => ({ person: { id: row.person_id, name: row.person_name }, embedding: embeddingOf(row.embedding) }));
+      .map((row) => ({
+        person: { id: row.person_id, name: row.person_name },
+        strangerId: row.stranger_id,
+        embedding: embeddingOf(row.embedding),
+      }));
 
     const rejected = new Set(
       (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => `${r.face_id} ${r.person_id}`),
@@ -247,15 +261,20 @@ export function openFaceStore(path: string) {
     const pairs: { faceId: string; person: PersonRef; score: number }[] = [];
     for (const face of unnamed) {
       const embedding = embeddingOf(face.embedding);
-      const best = new Map<string, { person: PersonRef; score: number }>();
+      const best = new Map<string, { person: PersonRef; score: number; sameStranger: boolean }>();
       for (const candidate of named) {
         if (rejected.has(`${face.id} ${candidate.person.id}`)) continue;
         const score = cosine(embedding, candidate.embedding);
+        const sameStranger = face.stranger_id !== null && candidate.strangerId === face.stranger_id;
         const known = best.get(candidate.person.id);
-        if (!known || score > known.score) best.set(candidate.person.id, { person: candidate.person, score });
+        best.set(candidate.person.id, {
+          person: candidate.person,
+          score: Math.max(score, known?.score ?? -Infinity),
+          sameStranger: sameStranger || (known?.sameStranger ?? false),
+        });
       }
-      for (const { person, score } of best.values()) {
-        if (score >= SUGGESTION_THRESHOLD) pairs.push({ faceId: face.id, person, score });
+      for (const { person, score, sameStranger } of best.values()) {
+        if (sameStranger || score >= SUGGESTION_THRESHOLD) pairs.push({ faceId: face.id, person, score });
       }
     }
     const suggested = new Set<string>();
@@ -353,6 +372,8 @@ export function openFaceStore(path: string) {
         if (!photo) return "no-face";
         if (!findPersonById.get(personId)) return "no-person";
         rejectSuggestion.run(faceId, personId);
+        // Out of a Stranger that has a Face named as this Person; it then joins another by the usual rule.
+        if (leaveStrangerOfPerson.run(faceId, personId).changes > 0) deleteEmptyStrangers.run();
         return present(photo.photo_sha256).find((face) => face.id === faceId)!;
       });
     },
