@@ -1,5 +1,18 @@
-import { useEffect, useId, useRef, useState, type DragEvent } from "react";
-import type { Analysis, AnalyzeError, Face, Field, Section, Summary, Warning } from "../shared/analysis.ts";
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from "react";
+import type {
+  Analysis,
+  AnalyzeError,
+  Face,
+  Field,
+  PersonRef,
+  PersonSummary,
+  Section,
+  Summary,
+  Warning,
+} from "../shared/analysis.ts";
+import { faceApi } from "./faceApi.ts";
+import { FaceBoxes, FacesSection } from "./faces.tsx";
+import { PeoplePanel, type PeopleChange } from "./people.tsx";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -18,17 +31,78 @@ export function App() {
   // The request for the Photo opened most recently. Opening another aborts it, so
   // a slower response for an earlier Photo can never replace a later one.
   const request = useRef<AbortController | null>(null);
+  // The Face whose naming form is open, if any.
+  const [selectedFaceId, setSelectedFaceId] = useState<string>();
+  // Every Person, for autocompleting names and for the People panel.
+  const [people, setPeople] = useState<PersonSummary[]>([]);
 
+  const previewUrl = state.status === "opened" ? state.previewUrl : undefined;
   useEffect(() => {
-    if (state.status !== "opened") return;
-    const { previewUrl } = state;
+    if (previewUrl === undefined) return;
     return () => URL.revokeObjectURL(previewUrl);
-  }, [state]);
+  }, [previewUrl]);
+
+  /** Changes the opened Photo's Faces in place, such as after one is named. */
+  function updateFaces(update: (faces: Face[]) => Face[]) {
+    setState((s) => (s.status === "opened" ? { ...s, analysis: { ...s.analysis, faces: update(s.analysis.faces) } } : s));
+  }
+
+  async function refreshPeople() {
+    try {
+      setPeople(await faceApi.people());
+    } catch {
+      // Autocomplete and the People panel keep the last list they had.
+    }
+  }
+
+  function selectFace(faceId: string) {
+    setSelectedFaceId(faceId);
+    void refreshPeople();
+  }
+
+  async function nameFace(faceId: string, name: string) {
+    const person = await faceApi.nameFace(faceId, name);
+    updateFaces((faces) => faces.map((face) => (face.id === faceId ? { ...face, person } : face)));
+    setSelectedFaceId(undefined);
+    await refreshPeople();
+  }
+
+  async function markNotAFace(faceId: string) {
+    await faceApi.markNotAFace(faceId);
+    updateFaces((faces) => faces.filter((face) => face.id !== faceId));
+    setSelectedFaceId(undefined);
+    await refreshPeople();
+  }
+
+  /** Keeps the opened Photo's names in step with a change made in the People panel. */
+  function onPeopleChanged(change: PeopleChange) {
+    const renamed = (person: PersonRef | undefined): PersonRef | undefined => {
+      if (!person) return undefined;
+      switch (change.kind) {
+        case "renamed":
+          return person.id === change.person.id ? change.person : person;
+        case "merged":
+          return person.id === change.from ? change.into : person;
+        case "deleted":
+          return person.id === change.personId ? undefined : person;
+        case "deleted-all":
+          return undefined;
+      }
+    };
+    updateFaces((faces) =>
+      faces.map(({ person, ...face }) => {
+        const next = renamed(person);
+        return next ? { ...face, person: next } : face;
+      }),
+    );
+    void refreshPeople();
+  }
 
   async function openPhoto(photo: File) {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    setSelectedFaceId(undefined);
     setState({ status: "analyzing", photoName: photo.name });
     let next: ViewerState;
     try {
@@ -68,7 +142,11 @@ export function App() {
       onDrop={onDrop}
     >
       <div className="photo">
-        {state.status === "opened" ? <PhotoPreview {...state} showBoxes={showBoxes} /> : <p className="hint">Drop a Photo here</p>}
+        {state.status === "opened" ? (
+          <PhotoPreview {...state} showBoxes={showBoxes} selectedFaceId={selectedFaceId} onSelectFace={selectFace} />
+        ) : (
+          <p className="hint">Drop a Photo here</p>
+        )}
         <label className="picker">
           Choose a Photo
           <input
@@ -84,6 +162,7 @@ export function App() {
         </label>
       </div>
       <div className="panel">
+        <PeoplePanel people={people} onOpen={refreshPeople} onChanged={onPeopleChanged} />
         {state.status === "analyzing" && (
           <p className="loading" role="status">
             Analyzing {state.photoName}…
@@ -99,8 +178,20 @@ export function App() {
             analysis={state.analysis}
             filter={filter}
             onFilterChange={setFilter}
-            showBoxes={showBoxes}
-            onShowBoxesChange={setShowBoxes}
+            faces={
+              state.analysis.faces.length > 0 && (
+                <FacesSection
+                  faces={state.analysis.faces}
+                  showBoxes={showBoxes}
+                  onShowBoxesChange={setShowBoxes}
+                  selectedFaceId={selectedFaceId}
+                  people={people}
+                  onName={nameFace}
+                  onNotAFace={markNotAFace}
+                  onClose={() => setSelectedFaceId(undefined)}
+                />
+              )
+            }
           />
         )}
       </div>
@@ -113,21 +204,18 @@ function OpenedPhotoPanel({
   analysis,
   filter,
   onFilterChange,
-  showBoxes,
-  onShowBoxesChange,
+  faces,
 }: {
   analysis: Analysis;
   filter: string;
   onFilterChange: (filter: string) => void;
-  showBoxes: boolean;
-  onShowBoxesChange: (show: boolean) => void;
+  /** The Faces section, when the Photo has any. */
+  faces: ReactNode;
 }) {
   return (
     <>
       {analysis.warnings.length > 0 && <Warnings warnings={analysis.warnings} />}
-      {analysis.faces.length > 0 && (
-        <FacesHeading count={analysis.faces.length} showBoxes={showBoxes} onShowBoxesChange={onShowBoxesChange} />
-      )}
+      {faces}
       <SummaryCard summary={analysis.summary} />
       <input
         type="search"
@@ -144,12 +232,20 @@ function OpenedPhotoPanel({
   );
 }
 
-function PhotoPreview({ analysis, previewUrl, showBoxes }: Opened & { showBoxes: boolean }) {
+function PhotoPreview({
+  analysis,
+  previewUrl,
+  showBoxes,
+  selectedFaceId,
+  onSelectFace,
+}: Opened & { showBoxes: boolean; selectedFaceId: string | undefined; onSelectFace: (faceId: string) => void }) {
   const { preview, photo, faces } = analysis;
   const framed = (src: string) => (
     <div className="preview-frame">
       <img src={src} alt={photo.name} />
-      {showBoxes && faces.length > 0 && <FaceBoxes faces={faces} />}
+      {showBoxes && faces.length > 0 && (
+        <FaceBoxes faces={faces} selectedFaceId={selectedFaceId} onSelect={onSelectFace} />
+      )}
     </div>
   );
   switch (preview.kind) {
@@ -164,49 +260,6 @@ function PhotoPreview({ analysis, previewUrl, showBoxes }: Opened & { showBoxes:
         </p>
       );
   }
-}
-
-/** A numbered box over each Face, placed by its fractions of the upright Photo, which the preview shows. */
-function FaceBoxes({ faces }: { faces: Face[] }) {
-  return (
-    <ol className="face-boxes" aria-label="Face boxes">
-      {faces.map(({ box }, i) => (
-        <li
-          key={i}
-          className="face-box"
-          style={{
-            left: `${box.x * 100}%`,
-            top: `${box.y * 100}%`,
-            width: `${box.width * 100}%`,
-            height: `${box.height * 100}%`,
-          }}
-        >
-          <span>{i + 1}</span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function FacesHeading({
-  count,
-  showBoxes,
-  onShowBoxesChange,
-}: {
-  count: number;
-  showBoxes: boolean;
-  onShowBoxesChange: (show: boolean) => void;
-}) {
-  const headingId = useId();
-  return (
-    <section className="faces" aria-labelledby={headingId}>
-      <h2 id={headingId}>Faces ({count})</h2>
-      <label>
-        <input type="checkbox" checked={showBoxes} onChange={(event) => onShowBoxesChange(event.target.checked)} />
-        Show boxes
-      </label>
-    </section>
-  );
 }
 
 function Warnings({ warnings }: { warnings: Warning[] }) {

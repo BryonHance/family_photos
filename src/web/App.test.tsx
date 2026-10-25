@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Analysis } from "../shared/analysis.ts";
+import type { Analysis, PersonSummary } from "../shared/analysis.ts";
 import { App } from "./App.tsx";
 
 const analysis: Analysis = {
@@ -522,4 +522,118 @@ it("shows no Faces heading, toggle or boxes when a Photo has no Faces", async ()
   expect(screen.queryByRole("region", { name: /faces/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox", { name: "Show boxes" })).not.toBeInTheDocument();
   expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
+});
+
+/**
+ * Stands in for the server's face routes, keeping People in memory, and records
+ * every request so tests can check what the viewer sent.
+ */
+function fakeFaceServer(opened: Analysis, people: PersonSummary[] = []) {
+  const requests: { method: string; url: string; body?: unknown }[] = [];
+  let nextId = 1;
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, string>) : undefined;
+    requests.push({ method, url, body });
+    const route = (pattern: RegExp, verb: string) => (method === verb ? url.match(pattern) : null);
+    let match;
+    if (url === "/api/analyze") return Response.json(opened);
+    if (route(/^\/api\/people$/, "GET")) return Response.json({ people });
+    if ((match = route(/^\/api\/faces\/(.+)\/person$/, "PUT"))) {
+      let person = people.find((p) => p.name.toLowerCase() === body!["name"]!.toLowerCase());
+      if (!person) people = [...people, (person = { id: `person-${nextId++}`, name: body!["name"]!, faceCount: 0 })];
+      person.faceCount++;
+      return Response.json({ id: person.id, name: person.name });
+    }
+    if (route(/^\/api\/faces\/(.+)\/not-a-face$/, "POST")) return new Response(null, { status: 204 });
+    if ((match = route(/^\/api\/people\/([^/]+)$/, "PATCH"))) {
+      people = people.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      return Response.json({ id: match[1], name: body!["name"] });
+    }
+    if ((match = route(/^\/api\/people\/([^/]+)\/merge$/, "POST"))) {
+      const from = people.find((p) => p.id === match![1])!;
+      people = people.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, faceCount: p.faceCount + from.faceCount } : p));
+      return new Response(null, { status: 204 });
+    }
+    if ((match = route(/^\/api\/people\/([^/]+)$/, "DELETE"))) {
+      people = people.filter((p) => p.id !== match![1]);
+      return new Response(null, { status: 204 });
+    }
+    if (route(/^\/api\/face-data$/, "DELETE")) {
+      people = [];
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  return { requests };
+}
+
+const crew: Analysis = {
+  ...analysis,
+  faces: [
+    { id: "face-a", box: { x: 0.2, y: 0.3, width: 0.1, height: 0.15 }, person: { id: "neil", name: "Neil" } },
+    { id: "face-b", box: { x: 0.45, y: 0.15, width: 0.1, height: 0.15 } },
+    { id: "face-c", box: { x: 0.7, y: 0.3, width: 0.1, height: 0.15 } },
+  ],
+};
+
+const crewPeople = (): PersonSummary[] => [
+  { id: "buzz", name: "Buzz Aldrin", faceCount: 3 },
+  { id: "mike", name: "Michael Collins", faceCount: 1 },
+  { id: "neil", name: "Neil", faceCount: 2 },
+];
+
+async function openCrew() {
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  await screen.findByRole("img", { name: "beach.jpg" });
+}
+
+const faceBox = (name: string | RegExp) =>
+  within(screen.getByRole("list", { name: "Face boxes" })).getByRole("button", { name });
+
+it("labels each Face box with its Person's name", async () => {
+  fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  expect(faceBox("Face 1: Neil")).toHaveTextContent("Neil");
+  expect(faceBox("Face 2")).toBeInTheDocument();
+});
+
+it("names a Face by clicking its box and picking an existing Person from the autocomplete", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 3"));
+  const form = screen.getByRole("form", { name: "Name Face 3" });
+  await userEvent.type(within(form).getByRole("combobox", { name: "Name" }), "IN");
+  const options = within(form).getByRole("listbox", { name: "People" });
+  // Matches anywhere in the name, ignoring case.
+  expect(within(options).getAllByRole("option").map((o) => o.textContent)).toEqual(["Buzz Aldrin", "Michael Collins"]);
+  await userEvent.click(within(options).getByRole("option", { name: "Buzz Aldrin" }));
+
+  expect(server.requests).toContainEqual({ method: "PUT", url: "/api/faces/face-c/person", body: { name: "Buzz Aldrin" } });
+  expect(await screen.findByRole("button", { name: "Face 3: Buzz Aldrin" })).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "Name Face 3" })).not.toBeInTheDocument();
+});
+
+it("names a Face with a new name, which creates a Person", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Mike{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PUT", url: "/api/faces/face-b/person", body: { name: "Mike" } });
+  expect(await screen.findByRole("button", { name: "Face 2: Mike" })).toBeInTheDocument();
+});
+
+it("starts the name field with the Face's current name", async () => {
+  fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 1: Neil"));
+
+  expect(screen.getByRole("combobox", { name: "Name" })).toHaveValue("Neil");
 });
