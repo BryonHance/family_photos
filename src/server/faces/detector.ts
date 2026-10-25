@@ -4,7 +4,8 @@ import { join } from "node:path";
 import ort from "onnxruntime-node";
 import sharp from "sharp";
 import type { Box } from "../../shared/analysis.ts";
-import { ALIGNED_SIZE, alignFace, type RgbImage } from "./align.ts";
+import type { Pixels } from "../pixels.ts";
+import { ALIGNED_SIZE, alignFace } from "./align.ts";
 import { iou } from "./overlap.ts";
 
 /** A point in fractions of the upright Photo's width and height. */
@@ -28,9 +29,7 @@ export type DetectedFace = {
  * encoded JPEG, PNG or WebP that sharp decodes and turns upright by its EXIF
  * Orientation, or raw pixels already upright (HEIC, decoded by heic-decode).
  */
-export type PhotoPixels =
-  | { kind: "encoded"; bytes: Uint8Array }
-  | { kind: "raw"; width: number; height: number; channels: 3 | 4; data: Uint8Array | Uint8ClampedArray };
+export type PhotoPixels = { kind: "encoded"; bytes: Uint8Array } | ({ kind: "raw" } & Pixels);
 
 export type FaceDetector = {
   /**
@@ -112,7 +111,7 @@ async function verifyModels(modelsDir: string) {
  * Undefined when the Photo cannot be decoded at all; a Photo that is only
  * partly damaged is decoded as far as it goes.
  */
-async function decodeUpright(photo: PhotoPixels): Promise<RgbImage | undefined> {
+async function decodeUpright(photo: PhotoPixels): Promise<Pixels<3> | undefined> {
   const image =
     photo.kind === "encoded"
       ? sharp(photo.bytes, { failOn: "none" }).autoOrient()
@@ -124,14 +123,14 @@ async function decodeUpright(photo: PhotoPixels): Promise<RgbImage | undefined> 
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    return { width: info.width, height: info.height, data };
+    return { width: info.width, height: info.height, channels: 3, data };
   } catch {
     return undefined;
   }
 }
 
 /** The Faces' boxes and landmarks, ordered left to right, before they are embedded. */
-async function detect(session: ort.InferenceSession, image: RgbImage): Promise<Omit<DetectedFace, "embedding">[]> {
+async function detect(session: ort.InferenceSession, image: Pixels<3>): Promise<Omit<DetectedFace, "embedding">[]> {
   const { tensor, scaledWidth, scaledHeight } = await letterbox(image);
   const outputs = await session.run({ [session.inputNames[0]!]: tensor });
   // Outputs must be looked up by name in outputNames order: scores for strides
@@ -150,7 +149,7 @@ async function detect(session: ort.InferenceSession, image: RgbImage): Promise<O
  * at the top left of a black 640×640 square, as InsightFace does, normalised to
  * (x − 127.5) / 128 in RGB and laid out NCHW.
  */
-async function letterbox(image: RgbImage) {
+async function letterbox(image: Pixels<3>) {
   const { data, info } = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } })
     .resize(INPUT_SIZE, INPUT_SIZE, { fit: "inside" })
     .raw()
@@ -175,7 +174,7 @@ async function letterbox(image: RgbImage) {
 }
 
 /** w600k_mbf on one aligned Face: (x − 127.5) / 127.5 in RGB, NCHW, then L2-normalised. */
-async function embed(session: ort.InferenceSession, face: RgbImage): Promise<Float32Array> {
+async function embed(session: ort.InferenceSession, face: Pixels<3>): Promise<Float32Array> {
   const plane = ALIGNED_SIZE * ALIGNED_SIZE;
   const input = new Float32Array(3 * plane);
   for (let i = 0; i < plane; i++) {
