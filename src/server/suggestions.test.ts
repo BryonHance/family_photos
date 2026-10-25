@@ -167,6 +167,18 @@ describe("Strangers", () => {
     expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
   });
 
+  it('never reuses a Stranger number, even after "Delete all face data"', async () => {
+    await api.upload("crew.jpg");
+    const before = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
+
+    await api.deleteAllFaceData();
+
+    await api.upload("crew.jpg");
+    const after = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
+    expect(after.every((label) => label !== undefined)).toBe(true);
+    for (const label of after) expect(before).not.toContain(label);
+  });
+
   it("lets two Faces of one Photo join the same Stranger, each the one of its most similar Face", async () => {
     await api.upload("crew.jpg", { detector: facesWith({ 0: 1 }, { 1: 1 }, { 2: 1 }) });
 

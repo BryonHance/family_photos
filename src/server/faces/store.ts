@@ -431,9 +431,8 @@ export function openFaceStore(path: string) {
       transaction(() => {
         db.exec("DELETE FROM faces");
         db.exec("DELETE FROM people");
+        // AUTOINCREMENT's counter survives, so Stranger numbers are never reused (spec #12).
         db.exec("DELETE FROM strangers");
-        // Nothing is left to confuse a new Stranger with, so numbering starts again.
-        db.exec("DELETE FROM sqlite_sequence WHERE name = 'strangers'");
       });
       db.exec("VACUUM");
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
