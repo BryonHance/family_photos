@@ -15,7 +15,10 @@ export type DetectedFace = {
   box: Box;
   /** SCRFD's confidence, from 0.5 (the threshold) to 1. */
   score: number;
-  /** Eyes (left then right, as seen), nose tip, mouth corners (left then right): what alignment needs. */
+  /**
+   * Eyes (left then right, as seen), nose tip, mouth corners (left then right): what alignment needs.
+   * Unlike the box, they may lie outside the Photo when its edge cuts the Face.
+   */
   landmarks: [Point, Point, Point, Point, Point];
   /** w600k_mbf's 512 numbers for the aligned Face, L2-normalised: compare by dot product (cosine). */
   embedding: Float32Array;
@@ -237,13 +240,15 @@ function iou(a: Candidate, b: Candidate): number {
 
 /** From pixels of the scaled Photo in the letterbox to fractions of the upright Photo. */
 function toFractions(c: Candidate, width: number, height: number): Omit<DetectedFace, "embedding"> {
-  const fx = (x: number) => clamp(x / width);
-  const fy = (y: number) => clamp(y / height);
-  const x = fx(c.x1);
-  const y = fy(c.y1);
+  // Only the box is kept inside the Photo. Landmarks of a Face cut by its edge
+  // stay where SCRFD put them, outside it, so that alignment is not distorted.
+  const fx = (x: number) => x / width;
+  const fy = (y: number) => y / height;
+  const x = clamp(fx(c.x1));
+  const y = clamp(fy(c.y1));
   const point = (i: number): Point => ({ x: fx(c.landmarks[i * 2]!), y: fy(c.landmarks[i * 2 + 1]!) });
   return {
-    box: { x, y, width: fx(c.x2) - x, height: fy(c.y2) - y },
+    box: { x, y, width: clamp(fx(c.x2)) - x, height: clamp(fy(c.y2)) - y },
     score: c.score,
     landmarks: [point(0), point(1), point(2), point(3), point(4)],
   };

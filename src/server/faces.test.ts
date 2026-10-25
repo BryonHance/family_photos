@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExifTool } from "exiftool-vendored";
+import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
@@ -115,5 +116,15 @@ describe("Face embeddings", () => {
         if (i !== j) expect(cosine(face.embedding, other.embedding), `Faces ${i + 1} and ${j + 1}`).toBeLessThan(0.4);
       });
     });
+  });
+
+  it("keeps the landmarks of a Face cut by the Photo's edge where they are, outside it, and only the box inside", async () => {
+    // crew.jpg with its left 200 px cut off: the left edge runs through Armstrong's left eye.
+    const cut = await sharp(await readFile(fixture("crew.jpg"))).extract({ left: 200, top: 0, width: 600, height: 629 }).toBuffer();
+
+    const [armstrong] = await faceDetector.detect({ kind: "encoded", bytes: cut });
+
+    expect(armstrong!.box.x).toBeGreaterThanOrEqual(0);
+    expect(armstrong!.landmarks[0].x).toBeLessThan(0);
   });
 });
