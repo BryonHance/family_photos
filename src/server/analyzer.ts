@@ -5,7 +5,8 @@ import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
 import type { FaceDetector, PhotoPixels } from "./faces/detector.ts";
 import type { FaceStore } from "./faces/store.ts";
-import { decodeUprightHeic, isHeic, previewFor, type Pixels } from "./preview.ts";
+import type { Pixels } from "./pixels.ts";
+import { decodeUprightHeic, isHeic, previewFor } from "./preview.ts";
 import {
   DATE_TAKEN,
   DATE_TAKEN_OFFSET,
@@ -199,10 +200,10 @@ async function findFaces(
   { faceDetector, faceStore }: AnalyzerConfig,
   mimeType: string,
   bytes: Uint8Array,
-  uprightHeic: Pixels | undefined,
+  uprightHeic: Pixels<4> | undefined,
 ): Promise<Face[]> {
   const pixels: PhotoPixels | undefined = uprightHeic
-    ? { kind: "raw", channels: 4, ...uprightHeic }
+    ? { kind: "raw", ...uprightHeic }
     : SHARP_TYPES.has(mimeType)
       ? { kind: "encoded", bytes }
       : undefined;

@@ -3,10 +3,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ort from "onnxruntime-node";
 import sharp from "sharp";
-import { ALIGNED_SIZE, alignFace, type RgbImage } from "./align.ts";
-
-/** A rectangle in fractions of the upright Photo's width and height. */
-export type Box = { x: number; y: number; width: number; height: number };
+import type { Box } from "../../shared/analysis.ts";
+import type { Pixels } from "../pixels.ts";
+import { ALIGNED_SIZE, alignFace } from "./align.ts";
+import { iou } from "./overlap.ts";
 
 /** A point in fractions of the upright Photo's width and height. */
 export type Point = { x: number; y: number };
@@ -15,7 +15,10 @@ export type DetectedFace = {
   box: Box;
   /** SCRFD's confidence, from 0.5 (the threshold) to 1. */
   score: number;
-  /** Eyes (left then right, as seen), nose tip, mouth corners (left then right): what alignment needs. */
+  /**
+   * Eyes (left then right, as seen), nose tip, mouth corners (left then right): what alignment needs.
+   * Unlike the box, they may lie outside the Photo when its edge cuts the Face.
+   */
   landmarks: [Point, Point, Point, Point, Point];
   /** w600k_mbf's 512 numbers for the aligned Face, L2-normalised: compare by dot product (cosine). */
   embedding: Float32Array;
@@ -26,9 +29,7 @@ export type DetectedFace = {
  * encoded JPEG, PNG or WebP that sharp decodes and turns upright by its EXIF
  * Orientation, or raw pixels already upright (HEIC, decoded by heic-decode).
  */
-export type PhotoPixels =
-  | { kind: "encoded"; bytes: Uint8Array }
-  | { kind: "raw"; width: number; height: number; channels: 3 | 4; data: Uint8Array | Uint8ClampedArray };
+export type PhotoPixels = { kind: "encoded"; bytes: Uint8Array } | ({ kind: "raw" } & Pixels);
 
 export type FaceDetector = {
   /**
@@ -110,7 +111,7 @@ async function verifyModels(modelsDir: string) {
  * Undefined when the Photo cannot be decoded at all; a Photo that is only
  * partly damaged is decoded as far as it goes.
  */
-async function decodeUpright(photo: PhotoPixels): Promise<RgbImage | undefined> {
+async function decodeUpright(photo: PhotoPixels): Promise<Pixels<3> | undefined> {
   const image =
     photo.kind === "encoded"
       ? sharp(photo.bytes, { failOn: "none" }).autoOrient()
@@ -122,14 +123,14 @@ async function decodeUpright(photo: PhotoPixels): Promise<RgbImage | undefined> 
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    return { width: info.width, height: info.height, data };
+    return { width: info.width, height: info.height, channels: 3, data };
   } catch {
     return undefined;
   }
 }
 
 /** The Faces' boxes and landmarks, ordered left to right, before they are embedded. */
-async function detect(session: ort.InferenceSession, image: RgbImage): Promise<Omit<DetectedFace, "embedding">[]> {
+async function detect(session: ort.InferenceSession, image: Pixels<3>): Promise<Omit<DetectedFace, "embedding">[]> {
   const { tensor, scaledWidth, scaledHeight } = await letterbox(image);
   const outputs = await session.run({ [session.inputNames[0]!]: tensor });
   // Outputs must be looked up by name in outputNames order: scores for strides
@@ -148,7 +149,7 @@ async function detect(session: ort.InferenceSession, image: RgbImage): Promise<O
  * at the top left of a black 640×640 square, as InsightFace does, normalised to
  * (x − 127.5) / 128 in RGB and laid out NCHW.
  */
-async function letterbox(image: RgbImage) {
+async function letterbox(image: Pixels<3>) {
   const { data, info } = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } })
     .resize(INPUT_SIZE, INPUT_SIZE, { fit: "inside" })
     .raw()
@@ -173,7 +174,7 @@ async function letterbox(image: RgbImage) {
 }
 
 /** w600k_mbf on one aligned Face: (x − 127.5) / 127.5 in RGB, NCHW, then L2-normalised. */
-async function embed(session: ort.InferenceSession, face: RgbImage): Promise<Float32Array> {
+async function embed(session: ort.InferenceSession, face: Pixels<3>): Promise<Float32Array> {
   const plane = ALIGNED_SIZE * ALIGNED_SIZE;
   const input = new Float32Array(3 * plane);
   for (let i = 0; i < plane; i++) {
@@ -222,28 +223,24 @@ function decodeStride(stride: number, scores: Float32Array, boxes: Float32Array,
 function nonMaximumSuppression(candidates: Candidate[]): Candidate[] {
   const kept: Candidate[] = [];
   for (const candidate of [...candidates].sort((a, b) => b.score - a.score)) {
-    if (kept.every((k) => iou(k, candidate) <= NMS_IOU_THRESHOLD)) kept.push(candidate);
+    if (kept.every((k) => iou(boxOf(k), boxOf(candidate)) <= NMS_IOU_THRESHOLD)) kept.push(candidate);
   }
   return kept;
 }
 
-function iou(a: Candidate, b: Candidate): number {
-  const w = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1));
-  const h = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
-  const overlap = w * h;
-  const area = (c: Candidate) => (c.x2 - c.x1) * (c.y2 - c.y1);
-  return overlap / (area(a) + area(b) - overlap);
-}
+const boxOf = (c: Candidate): Box => ({ x: c.x1, y: c.y1, width: c.x2 - c.x1, height: c.y2 - c.y1 });
 
 /** From pixels of the scaled Photo in the letterbox to fractions of the upright Photo. */
 function toFractions(c: Candidate, width: number, height: number): Omit<DetectedFace, "embedding"> {
-  const fx = (x: number) => clamp(x / width);
-  const fy = (y: number) => clamp(y / height);
-  const x = fx(c.x1);
-  const y = fy(c.y1);
+  // Only the box is kept inside the Photo. Landmarks of a Face cut by its edge
+  // stay where SCRFD put them, outside it, so that alignment is not distorted.
+  const fx = (x: number) => x / width;
+  const fy = (y: number) => y / height;
+  const x = clamp(fx(c.x1));
+  const y = clamp(fy(c.y1));
   const point = (i: number): Point => ({ x: fx(c.landmarks[i * 2]!), y: fy(c.landmarks[i * 2 + 1]!) });
   return {
-    box: { x, y, width: fx(c.x2) - x, height: fy(c.y2) - y },
+    box: { x, y, width: clamp(fx(c.x2)) - x, height: clamp(fy(c.y2)) - y },
     score: c.score,
     landmarks: [point(0), point(1), point(2), point(3), point(4)],
   };

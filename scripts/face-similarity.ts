@@ -10,6 +10,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadFaceDetector } from "../src/server/faces/detector.ts";
+import { cosine } from "../src/server/faces/similarity.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "../src/server/faces/thresholds.ts";
 
 const sampleDir = process.argv[2];
@@ -18,7 +19,7 @@ if (!sampleDir) {
   process.exit(2);
 }
 
-const detector = await loadFaceDetector(process.env["MODELS_DIR"] ?? join(import.meta.dirname, "../models"));
+const detector = await loadFaceDetector(process.env.MODELS_DIR ?? join(import.meta.dirname, "../models"));
 const faces: { person: number; embedding: Float32Array }[] = [];
 let photos = 0;
 let missed = 0;
@@ -40,9 +41,7 @@ for (let i = 0; i < faces.length; i++) {
   for (let j = i + 1; j < faces.length; j++) {
     const a = faces[i]!;
     const b = faces[j]!;
-    let dot = 0;
-    for (let k = 0; k < a.embedding.length; k++) dot += a.embedding[k]! * b.embedding[k]!;
-    (a.person === b.person ? same : different).push(dot);
+    (a.person === b.person ? same : different).push(cosine(a.embedding, b.embedding));
   }
 }
 

@@ -10,7 +10,7 @@ import type {
   Summary,
   Warning,
 } from "../shared/analysis.ts";
-import { faceApi } from "./faceApi.ts";
+import { faceApi, messageOf } from "./faceApi.ts";
 import { FaceBoxes, FacesSection } from "./faces.tsx";
 import { PeoplePanel, type PeopleChange } from "./people.tsx";
 
@@ -88,7 +88,7 @@ export function App() {
     try {
       showNamed(faceId, await faceApi.confirmSuggestion(faceId, suggested.id));
     } catch (failure) {
-      setSuggestionProblem(failure instanceof Error ? failure.message : String(failure));
+      setSuggestionProblem(messageOf(failure));
       return;
     }
     await refreshPeople();
@@ -100,7 +100,7 @@ export function App() {
       const updated = await faceApi.rejectSuggestion(faceId, suggested.id);
       updateFaces((faces) => faces.map((face) => (face.id === faceId ? updated : face)));
     } catch (failure) {
-      setSuggestionProblem(failure instanceof Error ? failure.message : String(failure));
+      setSuggestionProblem(messageOf(failure));
     }
   }
 
@@ -113,7 +113,8 @@ export function App() {
 
   /** Keeps the opened Photo's names in step with a change made in the People panel. */
   function onPeopleChanged(change: PeopleChange) {
-    const renamed = (person: PersonRef | undefined): PersonRef | undefined => {
+    /** The Person as they stand after the change: renamed, merged into another, or gone. */
+    const afterChange = (person: PersonRef | undefined): PersonRef | undefined => {
       if (!person) return undefined;
       switch (change.kind) {
         case "renamed":
@@ -128,8 +129,8 @@ export function App() {
     };
     updateFaces((faces) =>
       faces.map(({ person, suggestion, ...face }) => {
-        const nextPerson = renamed(person);
-        const nextSuggestion = renamed(suggestion);
+        const nextPerson = afterChange(person);
+        const nextSuggestion = afterChange(suggestion);
         return {
           ...face,
           ...(nextPerson && { person: nextPerson }),

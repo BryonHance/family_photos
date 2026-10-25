@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import { iou } from "./overlap.ts";
+import { cosine } from "./similarity.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
@@ -11,11 +13,15 @@ import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
  * of off-server backups.
  *
  * A Face marked "Not a face" keeps only its box and the Photo's hash: its
- * embedding, Person and model version are cleared.
+ * embedding, Person, Stranger, model version and rejected Suggestions are cleared.
  *
  * Each rejected Suggestion is kept as the pair of Face and Person, so that it
  * is never suggested again. A Stranger is only a number: its Faces point to it.
  * AUTOINCREMENT keeps a number from ever being reused once its Stranger empties.
+ *
+ * Each Photo with stored Faces also keeps the model version that last read it,
+ * by its hash, so that a model change detects it again even when all its Faces
+ * are "Not a face" and so carry no model version of their own.
  */
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS people (
@@ -47,10 +53,11 @@ const SCHEMA = `
     person_id TEXT NOT NULL REFERENCES people (id) ON DELETE CASCADE,
     PRIMARY KEY (face_id, person_id)
   );
+  CREATE TABLE IF NOT EXISTS photos (
+    sha256        TEXT PRIMARY KEY,
+    model_version TEXT NOT NULL
+  );
 `;
-
-/** A Face as the store returns it: what the Analysis shows. */
-export type StoredFace = Face;
 
 /** A Face as the detector found it, before it is stored. */
 export type NewFace = { box: Box; embedding: Float32Array };
@@ -60,7 +67,10 @@ export type PhotoKey = { sha256: string; modelVersion: string };
 
 export type FaceStore = ReturnType<typeof openFaceStore>;
 
-/** A detected Face whose box overlaps an old one by at least this IoU inherits its Person or "Not a face" mark. */
+/**
+ * A detected Face whose box overlaps an old one by at least this IoU inherits
+ * its Person or "Not a face" mark, and its rejected Suggestions.
+ */
 const INHERIT_IOU = 0.5;
 
 type FaceRow = {
@@ -104,6 +114,10 @@ export function openFaceStore(path: string) {
     db.exec("ALTER TABLE faces ADD COLUMN stranger_id INTEGER REFERENCES strangers (id) ON DELETE SET NULL");
   }
   db.exec("CREATE INDEX IF NOT EXISTS faces_by_stranger ON faces (stranger_id)");
+  // faces.db files made before the photos table: each Photo was read by the version its Faces carry.
+  db.exec(`
+    INSERT OR IGNORE INTO photos (sha256, model_version)
+    SELECT photo_sha256, MAX(model_version) FROM faces WHERE model_version IS NOT NULL GROUP BY photo_sha256`);
 
   const facesOfPhotoQuery = db.prepare(`
     SELECT faces.id, box_x, box_y, box_width, box_height, model_version, person_id, not_a_face, stranger_id,
@@ -124,7 +138,7 @@ export function openFaceStore(path: string) {
   );
   const findPersonByName = db.prepare("SELECT id, name FROM people WHERE name = ?");
   const insertPerson = db.prepare("INSERT INTO people (id, name) VALUES (?, ?)");
-  const findPerson = db.prepare("SELECT id FROM people WHERE id = ?");
+  const findPerson = db.prepare("SELECT id, name FROM people WHERE id = ?");
   const renamePerson = db.prepare("UPDATE people SET name = ? WHERE id = ?");
   const movePersonFaces = db.prepare("UPDATE faces SET person_id = ? WHERE person_id = ?");
   // Their Faces are left unnamed by ON DELETE SET NULL.
@@ -170,19 +184,23 @@ export function openFaceStore(path: string) {
     FROM rejected_suggestions JOIN faces ON faces.id = rejected_suggestions.face_id
     WHERE photo_sha256 = ?`);
   const rejectSuggestion = db.prepare("INSERT OR IGNORE INTO rejected_suggestions (face_id, person_id) VALUES (?, ?)");
+  const forgetRejections = db.prepare("DELETE FROM rejected_suggestions WHERE face_id = ?");
   const photoOfFace = db.prepare("SELECT photo_sha256 FROM faces WHERE id = ? AND not_a_face = 0");
-  const findPersonById = db.prepare("SELECT id, name FROM people WHERE id = ?");
+
+  const modelVersionOfPhoto = db.prepare("SELECT model_version FROM photos WHERE sha256 = ?");
+  const setModelVersionOfPhoto = db.prepare("INSERT OR REPLACE INTO photos (sha256, model_version) VALUES (?, ?)");
+  const forgetPhoto = db.prepare("DELETE FROM photos WHERE sha256 = ?");
 
   const rowsOf = (sha256: string) => facesOfPhotoQuery.all(sha256) as FaceRow[];
-  // Faces marked "Not a face" carry no model version, so they never make a Photo stale.
-  const isCurrent = (rows: FaceRow[], modelVersion: string) =>
-    rows.length > 0 && rows.every((r) => r.model_version === null || r.model_version === modelVersion);
+  /** True when these models last read the Photo, and it has stored Faces. */
+  const isCurrent = ({ sha256, modelVersion }: PhotoKey) =>
+    (modelVersionOfPhoto.get(sha256) as { model_version: string } | undefined)?.model_version === modelVersion;
 
   /**
    * The Faces of a stored Photo as the Analysis shows them, after placing each
    * unnamed Face that has no Suggestion and no Stranger in one. Call it inside a transaction.
    */
-  function present(sha256: string): StoredFace[] {
+  function present(sha256: string): Face[] {
     let suggestions = suggestionsFor(sha256);
     if (joinStrangers(sha256, suggestions)) suggestions = suggestionsFor(sha256);
     return visible(rowsOf(sha256), suggestions);
@@ -191,42 +209,32 @@ export function openFaceStore(path: string) {
   /**
    * Places each unnamed Face of a Photo that has no Suggestion and no Stranger:
    * it joins the Stranger of its most similar unnamed Face in another Photo, at
-   * or above STRANGER_THRESHOLD, or starts a new one. Two Faces of one Photo
-   * never join the same Stranger, the closest pairs being matched first, and a
-   * Face never joins a Stranger with a Face named as a Person it rejected.
-   * Strangers never merge. True when any Face was placed.
+   * or above STRANGER_THRESHOLD, or starts a new one. Each Face chooses on its
+   * own, so two Faces of one Photo may join the same Stranger. A Face never
+   * joins a Stranger with a Face named as a Person it rejected. Strangers never
+   * merge. True when any Face was placed.
    */
   function joinStrangers(sha256: string, suggestions: Map<string, PersonRef>): boolean {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
     const waiting = own.filter((f) => f.person_id === null && f.stranger_id === null && !suggestions.has(f.id));
     const modelVersion = waiting[0]?.model_version;
     if (modelVersion == null) return false;
-    const taken = new Set(own.map((f) => f.stranger_id).filter((id) => id !== null));
-    const barred = new Set(
-      (barredStrangers.all(sha256) as { face_id: string; stranger_id: number }[]).map((r) => `${r.face_id} ${r.stranger_id}`),
+    const barred = pairSet(
+      (barredStrangers.all(sha256) as { face_id: string; stranger_id: number }[]).map((r) => [r.face_id, r.stranger_id] as const),
     );
     const members = (strangerMembers.all(modelVersion) as { photo_sha256: string; embedding: Uint8Array; stranger_id: number }[])
       .filter((m) => m.photo_sha256 !== sha256)
       .map((m) => ({ strangerId: m.stranger_id, embedding: embeddingOf(m.embedding) }));
 
-    const pairs: { faceId: string; strangerId: number; score: number }[] = [];
     for (const face of waiting) {
       const embedding = embeddingOf(face.embedding);
+      let nearest: { strangerId: number; score: number } | undefined;
       for (const member of members) {
-        if (barred.has(`${face.id} ${member.strangerId}`)) continue;
+        if (barred.has(face.id, member.strangerId)) continue;
         const score = cosine(embedding, member.embedding);
-        if (score >= STRANGER_THRESHOLD) pairs.push({ faceId: face.id, strangerId: member.strangerId, score });
+        if (score >= STRANGER_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { strangerId: member.strangerId, score };
       }
-    }
-    const placed = new Set<string>();
-    for (const { faceId, strangerId } of pairs.sort((a, b) => b.score - a.score)) {
-      if (placed.has(faceId) || taken.has(strangerId)) continue;
-      setStrangerOfFace.run(strangerId, faceId);
-      placed.add(faceId);
-      taken.add(strangerId);
-    }
-    for (const face of waiting) {
-      if (!placed.has(face.id)) setStrangerOfFace.run(newStranger.run().lastInsertRowid, face.id);
+      setStrangerOfFace.run(nearest?.strangerId ?? newStranger.run().lastInsertRowid, face.id);
     }
     return true;
   }
@@ -237,7 +245,8 @@ export function openFaceStore(path: string) {
    * Face of its Stranger however alike they are; unless the user rejected that
    * Person for it. A Person already named in this Photo is not
    * suggested, and no two Faces of one Photo are suggested as the same Person:
-   * the closest pairs are matched first.
+   * the better match wins, and the other Face gets no Suggestion at all (it then
+   * follows the Stranger rule), never its next-best Person.
    */
   function suggestionsFor(sha256: string): Map<string, PersonRef> {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
@@ -254,16 +263,17 @@ export function openFaceStore(path: string) {
         embedding: embeddingOf(row.embedding),
       }));
 
-    const rejected = new Set(
-      (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => `${r.face_id} ${r.person_id}`),
+    const rejected = pairSet(
+      (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => [r.face_id, r.person_id] as const),
     );
 
+    // Each Face's own best Person first; only then are clashes settled.
     const pairs: { faceId: string; person: PersonRef; score: number }[] = [];
     for (const face of unnamed) {
       const embedding = embeddingOf(face.embedding);
       const best = new Map<string, { person: PersonRef; score: number; sameStranger: boolean }>();
       for (const candidate of named) {
-        if (rejected.has(`${face.id} ${candidate.person.id}`)) continue;
+        if (rejected.has(face.id, candidate.person.id)) continue;
         const score = cosine(embedding, candidate.embedding);
         const sameStranger = face.stranger_id !== null && candidate.strangerId === face.stranger_id;
         const known = best.get(candidate.person.id);
@@ -273,13 +283,14 @@ export function openFaceStore(path: string) {
           sameStranger: sameStranger || (known?.sameStranger ?? false),
         });
       }
-      for (const { person, score, sameStranger } of best.values()) {
-        if (sameStranger || score >= SUGGESTION_THRESHOLD) pairs.push({ faceId: face.id, person, score });
-      }
+      const qualifying = [...best.values()].filter((b) => b.sameStranger || b.score >= SUGGESTION_THRESHOLD);
+      const nearest = qualifying.sort((a, b) => b.score - a.score)[0];
+      if (nearest) pairs.push({ faceId: face.id, person: nearest.person, score: nearest.score });
     }
+    // Two Faces wanting the same Person: the better match wins, and the other gets no Suggestion.
     const suggested = new Set<string>();
     for (const { faceId, person } of pairs.sort((a, b) => b.score - a.score)) {
-      if (suggestions.has(faceId) || suggested.has(person.id)) continue;
+      if (suggested.has(person.id)) continue;
       suggestions.set(faceId, person);
       suggested.add(person.id);
     }
@@ -303,24 +314,25 @@ export function openFaceStore(path: string) {
      * The Faces of a Photo, left to right, without those marked "Not a face".
      * A Photo stored under the same model version returns its stored Faces and
      * `detect` is not called. Otherwise `detect` runs and its Faces replace any
-     * stored ones, each inheriting the Person or "Not a face" mark of an old
-     * Face whose box it mostly overlaps.
+     * stored ones, each inheriting the Person or "Not a face" mark, and the
+     * rejected Suggestions, of an old Face whose box it mostly overlaps.
      */
-    async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<StoredFace[]> {
-      const stored = rowsOf(photo.sha256);
-      if (isCurrent(stored, photo.modelVersion)) return transaction(() => present(photo.sha256));
+    async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<Face[]> {
+      if (isCurrent(photo)) return transaction(() => present(photo.sha256));
       const detected = await detect();
       return transaction(() => {
-        const old = rowsOf(photo.sha256);
         // Another request for the same Photo may have stored it while this one was detecting.
-        if (isCurrent(old, photo.modelVersion)) return present(photo.sha256);
+        if (isCurrent(photo)) return present(photo.sha256);
+        const old = rowsOf(photo.sha256);
         const heirs = inheritMarks(old, detected);
+        const rejections = rejectionsOfPhoto.all(photo.sha256) as { face_id: string; person_id: string }[];
         deleteFacesOfPhoto.run(photo.sha256);
         detected.forEach((face, i) => {
           const from = heirs[i];
           const notAFace = from?.not_a_face === 1;
+          const id = randomUUID();
           insertFace.run(
-            randomUUID(),
+            id,
             photo.sha256,
             face.box.x,
             face.box.y,
@@ -331,7 +343,13 @@ export function openFaceStore(path: string) {
             notAFace ? null : (from?.person_id ?? null),
             notAFace ? 1 : 0,
           );
+          if (from && !notAFace) {
+            for (const r of rejections) if (r.face_id === from.id) rejectSuggestion.run(id, r.person_id);
+          }
         });
+        // A Photo without Faces keeps nothing, not even its hash, so it is detected on every open.
+        if (detected.length > 0) setModelVersionOfPhoto.run(photo.sha256, photo.modelVersion);
+        else forgetPhoto.run(photo.sha256);
         deleteEmptyStrangers.run();
         return present(photo.sha256);
       });
@@ -339,12 +357,12 @@ export function openFaceStore(path: string) {
 
     /**
      * Names a Face: the Person with this name, ignoring case and spaces around
-     * it, or a new Person. Undefined when there is no such Face, or it is marked "Not a face".
+     * it, or a new Person. "no-face" when there is no such Face, or it is marked "Not a face".
      */
-    nameFace(faceId: string, name: string): PersonRef | undefined {
+    nameFace(faceId: string, name: string): PersonRef | "no-face" {
       return transaction(() => {
         const face = findFace.get(faceId) as { not_a_face: number } | undefined;
-        if (!face || face.not_a_face === 1) return undefined;
+        if (!face || face.not_a_face === 1) return "no-face";
         const person = personNamed(name);
         setPersonOfFace.run(person.id, faceId);
         return person;
@@ -355,7 +373,7 @@ export function openFaceStore(path: string) {
     confirmSuggestion(faceId: string, personId: string): PersonRef | "no-face" | "no-person" {
       return transaction(() => {
         if (!photoOfFace.get(faceId)) return "no-face";
-        const person = findPersonById.get(personId) as PersonRef | undefined;
+        const person = findPerson.get(personId) as PersonRef | undefined;
         if (!person) return "no-person";
         setPersonOfFace.run(person.id, faceId);
         return { id: person.id, name: person.name };
@@ -366,11 +384,11 @@ export function openFaceStore(path: string) {
      * Remembers that a Face is not this Person, so they are never suggested for
      * it again. Returns the Face as it now stands.
      */
-    rejectSuggestion(faceId: string, personId: string): StoredFace | "no-face" | "no-person" {
+    rejectSuggestion(faceId: string, personId: string): Face | "no-face" | "no-person" {
       return transaction(() => {
         const photo = photoOfFace.get(faceId) as { photo_sha256: string } | undefined;
         if (!photo) return "no-face";
-        if (!findPersonById.get(personId)) return "no-person";
+        if (!findPerson.get(personId)) return "no-person";
         rejectSuggestion.run(faceId, personId);
         // Out of a Stranger that has a Face named as this Person; it then joins another by the usual rule.
         if (leaveStrangerOfPerson.run(faceId, personId).changes > 0) deleteEmptyStrangers.run();
@@ -385,6 +403,7 @@ export function openFaceStore(path: string) {
     markNotAFace(faceId: string): boolean {
       return transaction(() => {
         const marked = markNotAFace.run(faceId).changes > 0;
+        forgetRejections.run(faceId);
         deleteEmptyStrangers.run();
         return marked;
       });
@@ -393,22 +412,22 @@ export function openFaceStore(path: string) {
     /** Every Person, by name, with how many Faces are named as them. */
     people: () => listPeople.all() as PersonSummary[],
 
-    /** "taken" when another Person already has the name, ignoring case. */
-    renamePerson(personId: string, name: string): PersonRef | "not-found" | "taken" {
+    /** "name-taken" when another Person already has the name, ignoring case. */
+    renamePerson(personId: string, name: string): PersonRef | "no-person" | "name-taken" {
       return transaction(() => {
-        if (!findPerson.get(personId)) return "not-found";
+        if (!findPerson.get(personId)) return "no-person";
         const holder = findPersonByName.get(name) as PersonRef | undefined;
-        if (holder && holder.id !== personId) return "taken";
+        if (holder && holder.id !== personId) return "name-taken";
         renamePerson.run(name, personId);
         return { id: personId, name };
       });
     },
 
     /** Names every Face of `personId` as `intoPersonId` instead, then deletes `personId`. */
-    mergePeople(personId: string, intoPersonId: string): "merged" | "not-found" | "same" {
-      if (personId === intoPersonId) return "same";
+    mergePeople(personId: string, intoPersonId: string): "merged" | "no-person" | "same-person" {
+      if (personId === intoPersonId) return "same-person";
       return transaction(() => {
-        if (!findPerson.get(personId) || !findPerson.get(intoPersonId)) return "not-found";
+        if (!findPerson.get(personId) || !findPerson.get(intoPersonId)) return "no-person";
         movePersonFaces.run(intoPersonId, personId);
         deletePerson.run(personId);
         return "merged";
@@ -438,9 +457,9 @@ export function openFaceStore(path: string) {
       transaction(() => {
         db.exec("DELETE FROM faces");
         db.exec("DELETE FROM people");
+        db.exec("DELETE FROM photos");
+        // AUTOINCREMENT's counter survives, so Stranger numbers are never reused (spec #12).
         db.exec("DELETE FROM strangers");
-        // Nothing is left to confuse a new Stranger with, so numbering starts again.
-        db.exec("DELETE FROM sqlite_sequence WHERE name = 'strangers'");
       });
       db.exec("VACUUM");
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -462,11 +481,11 @@ export function openFaceStore(path: string) {
 const STRANGER_LABEL_PHOTOS = 2;
 
 /** Each Face shows at most one of its Person, its Suggestion, or its Stranger's label. */
-function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFace[] {
+function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): Face[] {
   return rows
     .filter((r) => r.not_a_face === 0)
     .map((r) => {
-      const face: StoredFace = { id: r.id, box: boxOf(r) };
+      const face: Face = { id: r.id, box: boxOf(r) };
       const suggestion = suggestions.get(r.id);
       if (r.person_id !== null && r.person_name !== null) face.person = { id: r.person_id, name: r.person_name };
       else if (suggestion) face.suggestion = suggestion;
@@ -477,14 +496,15 @@ function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFa
     });
 }
 
+/** A set of pairs, such as (Face, rejected Person). */
+function pairSet<A, B>(pairs: Iterable<readonly [A, B]>) {
+  const byFirst = new Map<A, Set<B>>();
+  for (const [a, b] of pairs) byFirst.set(a, (byFirst.get(a) ?? new Set<B>()).add(b));
+  return { has: (a: A, b: B) => byFirst.get(a)?.has(b) ?? false };
+}
+
 /** The embedding a BLOB holds: 512 float32s, copied so that its alignment does not matter. */
 const embeddingOf = (blob: Uint8Array) => new Float32Array(new Uint8Array(blob).buffer);
-
-function cosine(a: Float32Array, b: Float32Array): number {
-  let dot = 0;
-  for (let i = 0; i < a.length; i++) dot += a[i]! * b[i]!;
-  return dot; // Both are L2-normalised.
-}
 
 const boxOf = (r: FaceRow): Box => ({ x: r.box_x, y: r.box_y, width: r.box_width, height: r.box_height });
 
@@ -505,11 +525,4 @@ function inheritMarks(old: FaceRow[], detected: NewFace[]): (FaceRow | undefined
     used.add(row.id);
   }
   return heirs;
-}
-
-function iou(a: Box, b: Box): number {
-  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-  const overlap = w * h;
-  return overlap / (a.width * a.height + b.width * b.height - overlap);
 }

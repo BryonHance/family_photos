@@ -198,6 +198,29 @@ describe("a Photo stored under an older model version", () => {
     expect(await api.upload("crew.jpg")).toMatchObject({ faces: reopened });
   });
 
+  it("carries a rejected Suggestion over to the new Face that mostly overlaps the old one", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    const [old] = (await api.upload("crew-rotated.jpg", { detector: olderModel(0.15) })).faces;
+    await api.rejectSuggestion(old!.id, neil.id);
+
+    const [reopened] = (await api.upload("crew-rotated.jpg")).faces;
+
+    expect(reopened!.id).not.toBe(old!.id);
+    expect(reopened!.suggestion).toBeUndefined();
+  });
+
+  it('is detected again even when every Face was marked "Not a face"', async () => {
+    const old = (await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces;
+    for (const face of old) await api.markNotAFace(face.id);
+    expect((await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces).toEqual([]);
+
+    const reopened = (await api.upload("crew.jpg")).faces;
+
+    // No new box mostly overlaps an old one, so none inherits its mark.
+    expect(reopened).toHaveLength(3);
+  });
+
   it("leaves a new Face unnamed when no old box mostly overlaps it", async () => {
     const old = (await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces;
     await api.nameFace(old[0]!.id, "Neil");
@@ -224,15 +247,19 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
       // 512 float32s: an embedding, not pixels.
       expect((row["embedding"] as Uint8Array).byteLength).toBe(512 * 4);
     }
-    // A Stranger is only a number, and a rejected Suggestion only a pair of ids.
-    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "rejected_suggestions", "strangers"]);
+    // A Stranger is only a number, a rejected Suggestion only a pair of ids, and
+    // a Photo only its hash and the version of the models that read it.
+    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "photos", "rejected_suggestions", "strangers"]);
     for (const row of api.storedRows()["strangers"]!) expect(Object.keys(row)).toEqual(["id"]);
+    for (const row of api.storedRows()["photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
   });
 });
 
 describe('"Not a face"', () => {
   it("hides the Face on reopening and keeps only its box and the Photo hash", async () => {
     const [armstrong, collins, aldrin] = (await api.upload("crew.jpg")).faces;
+    const buzz = await api.nameFace(aldrin!.id, "Buzz");
+    await api.rejectSuggestion(collins!.id, buzz.id);
     await api.nameFace(collins!.id, "Michael Collins");
 
     await api.markNotAFace(collins!.id);
@@ -244,7 +271,12 @@ describe('"Not a face"', () => {
     expect(dismissed["embedding"]).toBeNull();
     expect(dismissed["person_id"]).toBeNull();
     expect(dismissed["photo_sha256"]).toMatch(/^[0-9a-f]{64}$/);
-    expect(await api.people()).toEqual([expect.objectContaining({ name: "Michael Collins", faceCount: 0 })]);
+    // Nor any rejected Suggestion.
+    expect(api.storedRows()["rejected_suggestions"]!.filter((row) => row["face_id"] === collins!.id)).toEqual([]);
+    expect((await api.people()).map(({ name, faceCount }) => [name, faceCount])).toEqual([
+      ["Buzz", 1],
+      ["Michael Collins", 0],
+    ]);
   });
 
   it("cannot then be named", async () => {

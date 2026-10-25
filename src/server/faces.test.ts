@@ -2,10 +2,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExifTool } from "exiftool-vendored";
+import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import { cosine } from "./faces/similarity.ts";
 import { openFaceStore } from "./faces/store.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
@@ -92,7 +94,6 @@ describe("Faces", () => {
 describe("Face embeddings", () => {
   const detectFixture = async (name: string) =>
     faceDetector.detect({ kind: "encoded", bytes: await readFile(fixture(name)) });
-  const cosine = (a: Float32Array, b: Float32Array) => a.reduce((sum, v, i) => sum + v * b[i]!, 0);
 
   it("gives each Face a unit-length 512-number embedding", async () => {
     const faces = await detectFixture("crew.jpg");
@@ -115,5 +116,15 @@ describe("Face embeddings", () => {
         if (i !== j) expect(cosine(face.embedding, other.embedding), `Faces ${i + 1} and ${j + 1}`).toBeLessThan(0.4);
       });
     });
+  });
+
+  it("keeps the landmarks of a Face cut by the Photo's edge where they are, outside it, and only the box inside", async () => {
+    // crew.jpg with its left 200 px cut off: the left edge runs through Armstrong's left eye.
+    const cut = await sharp(await readFile(fixture("crew.jpg"))).extract({ left: 200, top: 0, width: 600, height: 629 }).toBuffer();
+
+    const [armstrong] = await faceDetector.detect({ kind: "encoded", bytes: cut });
+
+    expect(armstrong!.box.x).toBeGreaterThanOrEqual(0);
+    expect(armstrong!.landmarks[0].x).toBeLessThan(0);
   });
 });

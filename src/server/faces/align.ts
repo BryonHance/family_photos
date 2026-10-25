@@ -1,7 +1,6 @@
-/** Upright RGB pixels, row by row, 3 bytes per pixel. */
-export type RgbImage = { width: number; height: number; data: Uint8Array };
+import type { Pixels } from "../pixels.ts";
 
-/** A point in pixels of an RgbImage. */
+/** A point in pixels of an image. */
 export type PixelPoint = { x: number; y: number };
 
 export const ALIGNED_SIZE = 112;
@@ -26,7 +25,7 @@ const ARCFACE_TEMPLATE: readonly PixelPoint[] = [
  * sample of each output pixel, black outside the image, as `cv2.warpAffine` does.
  * Returns 112×112 RGB in memory only: no image of a Face is ever written (ADR-0002).
  */
-export function alignFace(image: RgbImage, landmarks: readonly PixelPoint[]): RgbImage {
+export function alignFace(image: Pixels<3>, landmarks: readonly PixelPoint[]): Pixels<3> {
   const { a, b, tx, ty } = similarityTransform(landmarks, ARCFACE_TEMPLATE);
   // Inverse of [a −b; b a]: 1/(a²+b²) · [a b; −b a].
   const det = a * a + b * b;
@@ -40,7 +39,7 @@ export function alignFace(image: RgbImage, landmarks: readonly PixelPoint[]): Rg
       sampleBilinear(image, x, y, out, (v * ALIGNED_SIZE + u) * 3);
     }
   }
-  return { width: ALIGNED_SIZE, height: ALIGNED_SIZE, data: out };
+  return { width: ALIGNED_SIZE, height: ALIGNED_SIZE, channels: 3, data: out };
 }
 
 /** Least-squares x' = a·x − b·y + tx, y' = b·x + a·y + ty from `from` onto `to`. */
@@ -68,7 +67,7 @@ function similarityTransform(from: readonly PixelPoint[], to: readonly PixelPoin
   return { a, b, tx: mt.x - (a * mf.x - b * mf.y), ty: mt.y - (b * mf.x + a * mf.y) };
 }
 
-function sampleBilinear({ width, height, data }: RgbImage, x: number, y: number, out: Uint8Array, at: number) {
+function sampleBilinear({ width, height, data }: Pixels<3>, x: number, y: number, out: Uint8Array, at: number) {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
   const fx = x - x0;

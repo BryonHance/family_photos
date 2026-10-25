@@ -32,7 +32,25 @@ afterEach(async () => {
 const strangerLabels = (faces: { stranger?: { label: string; photoCount: number } }[]) =>
   faces.map((face) => face.stranger && `${face.stranger.label}, in ${face.stranger.photoCount} Photos`);
 
-const suggestedNames =(faces: { suggestion?: { name: string } }[]) => faces.map((face) => face.suggestion?.name);
+const suggestedNames = (faces: { suggestion?: { name: string } }[]) => faces.map((face) => face.suggestion?.name);
+
+/**
+ * The real models finding a Photo's Faces, standing in an embedding for each,
+ * left to right: `vectors[i]` maps axes to weights, made unit length. A Face
+ * without one gets an axis of its own, unlike any other.
+ */
+const facesWith = (...vectors: Record<number, number>[]): FaceDetector => ({
+  modelVersion: faceDetector.modelVersion,
+  detect: async (photo) => {
+    const faces = (await faceDetector.detect(photo)).sort((a, b) => a.box.x - b.box.x);
+    return faces.map((face, i) => {
+      const embedding = new Float32Array(512);
+      for (const [axis, weight] of Object.entries(vectors[i] ?? { [100 + i]: 1 })) embedding[Number(axis)] = weight;
+      const length = Math.hypot(...embedding);
+      return { ...face, embedding: embedding.map((v) => v / length) };
+    });
+  },
+});
 
 describe("Suggestions", () => {
   it("suggests the Person of a named Face for the same Face in another Photo", async () => {
@@ -86,6 +104,24 @@ describe("Suggestions", () => {
     expect(suggestedNames(twice)).toEqual(["Neil", undefined]);
   });
 
+  it("leaves the Face that loses a clash without a Suggestion, rather than its next-best Person", async () => {
+    // Neil is axis 0 and Buzz axis 1. Both Faces of the second Photo are nearest to Neil,
+    // the right-hand one less so; it is like Buzz too, but less than like Neil.
+    const crew = (await api.upload("crew.jpg", { detector: facesWith({ 0: 1 }, { 1: 1 }, { 2: 1 }) })).faces;
+    const neil = await api.nameFace(crew[0]!.id, "Neil");
+    await api.nameFace(crew[1]!.id, "Buzz");
+
+    const twice = (
+      await api.upload("armstrong-twice.jpg", {
+        detector: facesWith({ 0: 0.8, 1: 0.55, 3: Math.sqrt(0.0575) }, { 0: 0.7, 1: 0.6, 4: Math.sqrt(0.15) }),
+      })
+    ).faces;
+
+    expect(twice.map((face) => face.suggestion)).toEqual([neil, undefined]);
+    // It then follows the Stranger rule: alone in a new Stranger, it shows no label.
+    expect(twice[1]!.stranger).toBeUndefined();
+  });
+
   it("does not suggest a Person already named in the same Photo", async () => {
     const [armstrong] = (await api.upload("crew.jpg")).faces;
     await api.nameFace(armstrong!.id, "Neil");
@@ -129,6 +165,34 @@ describe("Strangers", () => {
     expect(new Set(labels).size).toBe(3);
     expect(strangerLabels((await api.upload("crew.jpg")).faces)).toEqual(labels);
     expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
+  });
+
+  it('never reuses a Stranger number, even after "Delete all face data"', async () => {
+    await api.upload("crew.jpg");
+    const before = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
+
+    await api.deleteAllFaceData();
+
+    await api.upload("crew.jpg");
+    const after = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
+    expect(after.every((label) => label !== undefined)).toBe(true);
+    for (const label of after) expect(before).not.toContain(label);
+  });
+
+  it("lets two Faces of one Photo join the same Stranger, each the one of its most similar Face", async () => {
+    await api.upload("crew.jpg", { detector: facesWith({ 0: 1 }, { 1: 1 }, { 2: 1 }) });
+
+    const twice = (
+      await api.upload("armstrong-twice.jpg", {
+        detector: facesWith({ 0: 0.9, 3: Math.sqrt(0.19) }, { 0: 0.8, 4: 0.6 }),
+      })
+    ).faces;
+
+    expect(strangerLabels(twice)).toEqual([
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+    ]);
+    expect(twice[1]!.stranger).toEqual(twice[0]!.stranger);
   });
 
   it("the Faces of a deleted Person join a Stranger again, under a number never used before", async () => {
