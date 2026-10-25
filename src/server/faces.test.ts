@@ -87,3 +87,32 @@ describe("Faces", () => {
     expect(analysis.faces).toEqual([]);
   });
 });
+
+describe("Face embeddings", () => {
+  const detectFixture = async (name: string) =>
+    faceDetector.detect({ kind: "encoded", bytes: await readFile(fixture(name)) });
+  const cosine = (a: Float32Array, b: Float32Array) => a.reduce((sum, v, i) => sum + v * b[i]!, 0);
+
+  it("gives each Face a unit-length 512-number embedding", async () => {
+    const faces = await detectFixture("crew.jpg");
+
+    expect(faces).toHaveLength(3);
+    for (const { embedding } of faces) {
+      expect(embedding).toHaveLength(512);
+      expect(cosine(embedding, embedding)).toBeCloseTo(1, 4);
+    }
+  });
+
+  it("gives the same Face in two Photos near-identical embeddings, and different Faces distant ones", async () => {
+    // crew-rotated.jpg is the same portrait stored sideways: the same three Faces.
+    const upright = await detectFixture("crew.jpg");
+    const rotated = await detectFixture("crew-rotated.jpg");
+
+    upright.forEach((face, i) => {
+      expect(cosine(face.embedding, rotated[i]!.embedding), `Face ${i + 1} in both`).toBeGreaterThan(0.9);
+      upright.forEach((other, j) => {
+        if (i !== j) expect(cosine(face.embedding, other.embedding), `Faces ${i + 1} and ${j + 1}`).toBeLessThan(0.4);
+      });
+    });
+  });
+});

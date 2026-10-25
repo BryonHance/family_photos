@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ort from "onnxruntime-node";
 import sharp from "sharp";
+import { ALIGNED_SIZE, alignFace, type RgbImage } from "./align.ts";
 
 /** A rectangle in fractions of the upright Photo's width and height. */
 export type Box = { x: number; y: number; width: number; height: number };
@@ -16,6 +17,8 @@ export type DetectedFace = {
   score: number;
   /** Eyes (left then right, as seen), nose tip, mouth corners (left then right): what alignment needs. */
   landmarks: [Point, Point, Point, Point, Point];
+  /** w600k_mbf's 512 numbers for the aligned Face, L2-normalised: compare by dot product (cosine). */
+  embedding: Float32Array;
 };
 
 /**
@@ -28,7 +31,12 @@ export type PhotoPixels =
   | { kind: "raw"; width: number; height: number; channels: 3 | 4; data: Uint8Array | Uint8ClampedArray };
 
 export type FaceDetector = {
-  /** The Faces in a Photo, ordered left to right. */
+  /**
+   * Names the models and the pipeline that made the embeddings. Embeddings from
+   * different versions cannot be compared (ADR-0002).
+   */
+  modelVersion: string;
+  /** The Faces in a Photo, ordered left to right, each with its embedding. */
   detect(photo: PhotoPixels): Promise<DetectedFace[]>;
 };
 
@@ -36,6 +44,14 @@ export type FaceDetector = {
 export class FaceModelError extends Error {}
 
 const DETECTOR_FILE = "det_500m.onnx";
+const RECOGNIZER_FILE = "w600k_mbf.onnx";
+/** Change it whenever the models or the alignment change, so that stored Photos are detected again. */
+export const FACE_MODEL_VERSION = "buffalo_sc-v0.7/arcface-112";
+/**
+ * The upright Photo is decoded at most this size on its long side: enough
+ * pixels to align a Face found at 640 px, without holding a 48 MP Photo in memory.
+ */
+const MAX_DECODED_SIDE = 2048;
 const INPUT_SIZE = 640;
 const STRIDES = [8, 16, 32] as const;
 const ANCHORS_PER_CELL = 2;
@@ -45,15 +61,29 @@ const NMS_IOU_THRESHOLD = 0.4;
 /**
  * Checks every buffalo_sc model file against its pinned SHA-256
  * (`models.sha256`, shared with `scripts/fetch-models.sh`), then loads the
- * detector to run on the CPU. Throws a FaceModelError naming `pixi run models`
- * when a file is missing or corrupt.
+ * detector and the recognizer to run on the CPU. Throws a FaceModelError naming
+ * `pixi run models` when a file is missing or corrupt.
  */
 export async function loadFaceDetector(modelsDir: string): Promise<FaceDetector> {
   await verifyModels(modelsDir);
-  const session = await ort.InferenceSession.create(join(modelsDir, DETECTOR_FILE), {
-    executionProviders: ["cpu"],
-  });
-  return { detect: (photo) => detect(session, photo) };
+  const load = (file: string) => ort.InferenceSession.create(join(modelsDir, file), { executionProviders: ["cpu"] });
+  const detector = await load(DETECTOR_FILE);
+  const recognizer = await load(RECOGNIZER_FILE);
+  return {
+    modelVersion: FACE_MODEL_VERSION,
+    async detect(photo) {
+      const image = await decodeUpright(photo);
+      // A Photo too damaged to decode has no Faces to find; its Warnings say why.
+      if (!image) return [];
+      const faces: DetectedFace[] = [];
+      // One Face at a time: each aligned crop lives only in memory until it is embedded (ADR-0002).
+      for (const face of await detect(detector, image)) {
+        const pixels = face.landmarks.map((p) => ({ x: p.x * image.width, y: p.y * image.height }));
+        faces.push({ ...face, embedding: await embed(recognizer, alignFace(image, pixels)) });
+      }
+      return faces;
+    },
+  };
 }
 
 async function verifyModels(modelsDir: string) {
@@ -75,11 +105,32 @@ async function verifyModels(modelsDir: string) {
   }
 }
 
-async function detect(session: ort.InferenceSession, photo: PhotoPixels): Promise<DetectedFace[]> {
-  const letterboxed = await letterbox(photo);
-  // A Photo too damaged to decode has no Faces to find; its Warnings say why.
-  if (!letterboxed) return [];
-  const { tensor, scaledWidth, scaledHeight } = letterboxed;
+/**
+ * The upright Photo as RGB, at most MAX_DECODED_SIDE on its long side.
+ * Undefined when the Photo cannot be decoded at all; a Photo that is only
+ * partly damaged is decoded as far as it goes.
+ */
+async function decodeUpright(photo: PhotoPixels): Promise<RgbImage | undefined> {
+  const image =
+    photo.kind === "encoded"
+      ? sharp(photo.bytes, { failOn: "none" }).autoOrient()
+      : sharp(photo.data, { raw: { width: photo.width, height: photo.height, channels: photo.channels } });
+  try {
+    const { data, info } = await image
+      .resize(MAX_DECODED_SIDE, MAX_DECODED_SIDE, { fit: "inside", withoutEnlargement: true })
+      .toColourspace("srgb")
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return { width: info.width, height: info.height, data };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The Faces' boxes and landmarks, ordered left to right, before they are embedded. */
+async function detect(session: ort.InferenceSession, image: RgbImage): Promise<Omit<DetectedFace, "embedding">[]> {
+  const { tensor, scaledWidth, scaledHeight } = await letterbox(image);
   const outputs = await session.run({ [session.inputNames[0]!]: tensor });
   // Outputs must be looked up by name in outputNames order: scores for strides
   // 8/16/32, then boxes, then landmarks. The result object's own key order is not that.
@@ -95,26 +146,13 @@ async function detect(session: ort.InferenceSession, photo: PhotoPixels): Promis
 /**
  * Shrinks (or enlarges) the upright Photo to 640 px on its long side and pastes it
  * at the top left of a black 640×640 square, as InsightFace does, normalised to
- * (x − 127.5) / 128 in RGB and laid out NCHW. Undefined when the Photo cannot
- * be decoded at all; a Photo that is only partly damaged is decoded as far as it goes.
+ * (x − 127.5) / 128 in RGB and laid out NCHW.
  */
-async function letterbox(photo: PhotoPixels) {
-  const image =
-    photo.kind === "encoded"
-      ? sharp(photo.bytes, { failOn: "none" }).autoOrient()
-      : sharp(photo.data, { raw: { width: photo.width, height: photo.height, channels: photo.channels } });
-  let decoded;
-  try {
-    decoded = await image
-      .resize(INPUT_SIZE, INPUT_SIZE, { fit: "inside" })
-      .toColourspace("srgb")
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-  } catch {
-    return undefined;
-  }
-  const { data, info } = decoded;
+async function letterbox(image: RgbImage) {
+  const { data, info } = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } })
+    .resize(INPUT_SIZE, INPUT_SIZE, { fit: "inside" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
   const plane = INPUT_SIZE * INPUT_SIZE;
   const input = new Float32Array(3 * plane).fill((0 - 127.5) / 128);
@@ -132,6 +170,21 @@ async function letterbox(photo: PhotoPixels) {
     scaledWidth: info.width,
     scaledHeight: info.height,
   };
+}
+
+/** w600k_mbf on one aligned Face: (x − 127.5) / 127.5 in RGB, NCHW, then L2-normalised. */
+async function embed(session: ort.InferenceSession, face: RgbImage): Promise<Float32Array> {
+  const plane = ALIGNED_SIZE * ALIGNED_SIZE;
+  const input = new Float32Array(3 * plane);
+  for (let i = 0; i < plane; i++) {
+    for (let c = 0; c < 3; c++) input[c * plane + i] = (face.data[i * 3 + c]! - 127.5) / 127.5;
+  }
+  const outputs = await session.run({
+    [session.inputNames[0]!]: new ort.Tensor("float32", input, [1, 3, ALIGNED_SIZE, ALIGNED_SIZE]),
+  });
+  const raw = outputs[session.outputNames[0]!]!.data as Float32Array;
+  const length = Math.hypot(...raw);
+  return Float32Array.from(raw, (v) => v / length);
 }
 
 type Candidate = { x1: number; y1: number; x2: number; y2: number; score: number; landmarks: number[] };
@@ -183,7 +236,7 @@ function iou(a: Candidate, b: Candidate): number {
 }
 
 /** From pixels of the scaled Photo in the letterbox to fractions of the upright Photo. */
-function toFractions(c: Candidate, width: number, height: number): DetectedFace {
+function toFractions(c: Candidate, width: number, height: number): Omit<DetectedFace, "embedding"> {
   const fx = (x: number) => clamp(x / width);
   const fy = (y: number) => clamp(y / height);
   const x = fx(c.x1);
