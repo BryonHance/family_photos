@@ -219,11 +219,14 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
     expect(rows).toHaveLength(6);
     for (const row of rows) {
       expect(Object.keys(row).sort()).toEqual(
-        ["box_height", "box_width", "box_x", "box_y", "embedding", "id", "model_version", "not_a_face", "person_id", "photo_sha256"],
+        ["box_height", "box_width", "box_x", "box_y", "embedding", "id", "model_version", "not_a_face", "person_id", "photo_sha256", "stranger_id"],
       );
       // 512 float32s: an embedding, not pixels.
       expect((row["embedding"] as Uint8Array).byteLength).toBe(512 * 4);
     }
+    // A Stranger is only a number, and a rejected Suggestion only a pair of ids.
+    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "rejected_suggestions", "strangers"]);
+    for (const row of api.storedRows()["strangers"]!) expect(Object.keys(row)).toEqual(["id"]);
   });
 });
 

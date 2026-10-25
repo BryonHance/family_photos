@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
-import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
+import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
  * faces.db holds face data and nothing else (ADR-0002): per Face, its box, the
@@ -14,12 +14,16 @@ import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
  * embedding, Person and model version are cleared.
  *
  * Each rejected Suggestion is kept as the pair of Face and Person, so that it
- * is never suggested again.
+ * is never suggested again. A Stranger is only a number: its Faces point to it.
+ * AUTOINCREMENT keeps a number from ever being reused once its Stranger empties.
  */
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS people (
     id   TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE
+  );
+  CREATE TABLE IF NOT EXISTS strangers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
   );
   CREATE TABLE IF NOT EXISTS faces (
     id            TEXT PRIMARY KEY,
@@ -32,7 +36,8 @@ const SCHEMA = `
     embedding     BLOB,
     person_id     TEXT REFERENCES people (id) ON DELETE SET NULL,
     not_a_face    INTEGER NOT NULL DEFAULT 0 CHECK (not_a_face IN (0, 1)),
-    CHECK (not_a_face = 0 OR (embedding IS NULL AND person_id IS NULL AND model_version IS NULL)),
+    stranger_id   INTEGER REFERENCES strangers (id) ON DELETE SET NULL,
+    CHECK (not_a_face = 0 OR (embedding IS NULL AND person_id IS NULL AND model_version IS NULL AND stranger_id IS NULL)),
     CHECK (not_a_face = 1 OR (embedding IS NOT NULL AND model_version IS NOT NULL))
   );
   CREATE INDEX IF NOT EXISTS faces_by_photo ON faces (photo_sha256);
@@ -68,9 +73,18 @@ type FaceRow = {
   person_id: string | null;
   person_name: string | null;
   not_a_face: number;
+  stranger_id: number | null;
+  /** How many Photos the unnamed Faces of its Stranger span. */
+  stranger_photos: number;
 };
 
-type EmbeddingRow = { id: string; embedding: Uint8Array; model_version: string | null; person_id: string | null };
+type EmbeddingRow = {
+  id: string;
+  embedding: Uint8Array;
+  model_version: string | null;
+  person_id: string | null;
+  stranger_id: number | null;
+};
 type NamedRow = { photo_sha256: string; embedding: Uint8Array; person_id: string; person_name: string };
 
 /** Opens (or creates) faces.db at `path`; `":memory:"` keeps it in memory. */
@@ -78,10 +92,18 @@ export function openFaceStore(path: string) {
   const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
+  // faces.db files made before Strangers lack the column (and so its CHECK).
+  const columns = db.prepare("PRAGMA table_info(faces)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "stranger_id")) {
+    db.exec("ALTER TABLE faces ADD COLUMN stranger_id INTEGER REFERENCES strangers (id) ON DELETE SET NULL");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS faces_by_stranger ON faces (stranger_id)");
 
   const facesOfPhotoQuery = db.prepare(`
-    SELECT faces.id, box_x, box_y, box_width, box_height, model_version, person_id, not_a_face,
-           people.name AS person_name
+    SELECT faces.id, box_x, box_y, box_width, box_height, model_version, person_id, not_a_face, stranger_id,
+           people.name AS person_name,
+           (SELECT COUNT(DISTINCT member.photo_sha256) FROM faces AS member
+            WHERE member.stranger_id = faces.stranger_id AND member.person_id IS NULL) AS stranger_photos
     FROM faces LEFT JOIN people ON people.id = faces.person_id
     WHERE photo_sha256 = ?
     ORDER BY box_x`);
@@ -92,7 +114,7 @@ export function openFaceStore(path: string) {
   const findFace = db.prepare("SELECT not_a_face FROM faces WHERE id = ?");
   const setPersonOfFace = db.prepare("UPDATE faces SET person_id = ? WHERE id = ?");
   const markNotAFace = db.prepare(
-    "UPDATE faces SET not_a_face = 1, embedding = NULL, person_id = NULL, model_version = NULL WHERE id = ?",
+    "UPDATE faces SET not_a_face = 1, embedding = NULL, person_id = NULL, model_version = NULL, stranger_id = NULL WHERE id = ?",
   );
   const findPersonByName = db.prepare("SELECT id, name FROM people WHERE name = ?");
   const insertPerson = db.prepare("INSERT INTO people (id, name) VALUES (?, ?)");
@@ -113,7 +135,24 @@ export function openFaceStore(path: string) {
     FROM faces JOIN people ON people.id = faces.person_id
     WHERE model_version = ?`);
   const embeddingsOfPhoto = db.prepare(
-    "SELECT id, embedding, model_version, person_id FROM faces WHERE photo_sha256 = ? AND embedding IS NOT NULL",
+    "SELECT id, embedding, model_version, person_id, stranger_id FROM faces WHERE photo_sha256 = ? AND embedding IS NOT NULL",
+  );
+  // The unnamed Faces of every Stranger, for Faces looking for one to join.
+  const strangerMembers = db.prepare(`
+    SELECT photo_sha256, embedding, stranger_id FROM faces
+    WHERE stranger_id IS NOT NULL AND person_id IS NULL AND model_version = ?`);
+  // For each Face of a Photo, the Strangers it must not join: those with a Face
+  // named as a Person it rejected.
+  const barredStrangers = db.prepare(`
+    SELECT rejected_suggestions.face_id, named.stranger_id
+    FROM rejected_suggestions
+    JOIN faces AS face ON face.id = rejected_suggestions.face_id
+    JOIN faces AS named ON named.person_id = rejected_suggestions.person_id
+    WHERE face.photo_sha256 = ? AND named.stranger_id IS NOT NULL`);
+  const newStranger = db.prepare("INSERT INTO strangers DEFAULT VALUES");
+  const setStrangerOfFace = db.prepare("UPDATE faces SET stranger_id = ? WHERE id = ?");
+  const deleteEmptyStrangers = db.prepare(
+    "DELETE FROM strangers WHERE id NOT IN (SELECT stranger_id FROM faces WHERE stranger_id IS NOT NULL)",
   );
   const rejectionsOfPhoto = db.prepare(`
     SELECT face_id, rejected_suggestions.person_id
@@ -128,8 +167,58 @@ export function openFaceStore(path: string) {
   const isCurrent = (rows: FaceRow[], modelVersion: string) =>
     rows.length > 0 && rows.every((r) => r.model_version === null || r.model_version === modelVersion);
 
-  /** The Faces of a stored Photo as the Analysis shows them. */
-  const present = (sha256: string) => visible(rowsOf(sha256), suggestionsFor(sha256));
+  /**
+   * The Faces of a stored Photo as the Analysis shows them, after placing each
+   * unnamed Face that has no Suggestion and no Stranger in one. Call it inside a transaction.
+   */
+  function present(sha256: string): StoredFace[] {
+    let suggestions = suggestionsFor(sha256);
+    if (joinStrangers(sha256, suggestions)) suggestions = suggestionsFor(sha256);
+    return visible(rowsOf(sha256), suggestions);
+  }
+
+  /**
+   * Places each unnamed Face of a Photo that has no Suggestion and no Stranger:
+   * it joins the Stranger of its most similar unnamed Face in another Photo, at
+   * or above STRANGER_THRESHOLD, or starts a new one. Two Faces of one Photo
+   * never join the same Stranger, the closest pairs being matched first, and a
+   * Face never joins a Stranger with a Face named as a Person it rejected.
+   * Strangers never merge. True when any Face was placed.
+   */
+  function joinStrangers(sha256: string, suggestions: Map<string, PersonRef>): boolean {
+    const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
+    const waiting = own.filter((f) => f.person_id === null && f.stranger_id === null && !suggestions.has(f.id));
+    const modelVersion = waiting[0]?.model_version;
+    if (modelVersion == null) return false;
+    const taken = new Set(own.map((f) => f.stranger_id).filter((id) => id !== null));
+    const barred = new Set(
+      (barredStrangers.all(sha256) as { face_id: string; stranger_id: number }[]).map((r) => `${r.face_id} ${r.stranger_id}`),
+    );
+    const members = (strangerMembers.all(modelVersion) as { photo_sha256: string; embedding: Uint8Array; stranger_id: number }[])
+      .filter((m) => m.photo_sha256 !== sha256)
+      .map((m) => ({ strangerId: m.stranger_id, embedding: embeddingOf(m.embedding) }));
+
+    const pairs: { faceId: string; strangerId: number; score: number }[] = [];
+    for (const face of waiting) {
+      const embedding = embeddingOf(face.embedding);
+      for (const member of members) {
+        if (barred.has(`${face.id} ${member.strangerId}`)) continue;
+        const score = cosine(embedding, member.embedding);
+        if (score >= STRANGER_THRESHOLD) pairs.push({ faceId: face.id, strangerId: member.strangerId, score });
+      }
+    }
+    const placed = new Set<string>();
+    for (const { faceId, strangerId } of pairs.sort((a, b) => b.score - a.score)) {
+      if (placed.has(faceId) || taken.has(strangerId)) continue;
+      setStrangerOfFace.run(strangerId, faceId);
+      placed.add(faceId);
+      taken.add(strangerId);
+    }
+    for (const face of waiting) {
+      if (!placed.has(face.id)) setStrangerOfFace.run(newStranger.run().lastInsertRowid, face.id);
+    }
+    return true;
+  }
 
   /**
    * Each unnamed Face's Suggestion: the Person of its nearest named Face in
@@ -198,7 +287,7 @@ export function openFaceStore(path: string) {
      */
     async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<StoredFace[]> {
       const stored = rowsOf(photo.sha256);
-      if (isCurrent(stored, photo.modelVersion)) return present(photo.sha256);
+      if (isCurrent(stored, photo.modelVersion)) return transaction(() => present(photo.sha256));
       const detected = await detect();
       return transaction(() => {
         const old = rowsOf(photo.sha256);
@@ -222,6 +311,7 @@ export function openFaceStore(path: string) {
             notAFace ? 1 : 0,
           );
         });
+        deleteEmptyStrangers.run();
         return present(photo.sha256);
       });
     },
@@ -269,7 +359,13 @@ export function openFaceStore(path: string) {
      * Marks a Face "Not a face": it keeps only its box and the Photo's hash, and
      * stays hidden whenever the Photo is reopened. False when there is no such Face.
      */
-    markNotAFace: (faceId: string): boolean => markNotAFace.run(faceId).changes > 0,
+    markNotAFace(faceId: string): boolean {
+      return transaction(() => {
+        const marked = markNotAFace.run(faceId).changes > 0;
+        deleteEmptyStrangers.run();
+        return marked;
+      });
+    },
 
     /** Every Person, by name, with how many Faces are named as them. */
     people: () => listPeople.all() as PersonSummary[],
@@ -307,6 +403,9 @@ export function openFaceStore(path: string) {
       transaction(() => {
         db.exec("DELETE FROM faces");
         db.exec("DELETE FROM people");
+        db.exec("DELETE FROM strangers");
+        // Nothing is left to confuse a new Stranger with, so numbering starts again.
+        db.exec("DELETE FROM sqlite_sequence WHERE name = 'strangers'");
       });
       db.exec("VACUUM");
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -324,6 +423,10 @@ export function openFaceStore(path: string) {
   }
 }
 
+/** A Stranger's label shows once its unnamed Faces span this many Photos. */
+const STRANGER_LABEL_PHOTOS = 2;
+
+/** Each Face shows at most one of its Person, its Suggestion, or its Stranger's label. */
 function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFace[] {
   return rows
     .filter((r) => r.not_a_face === 0)
@@ -332,6 +435,9 @@ function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFa
       const suggestion = suggestions.get(r.id);
       if (r.person_id !== null && r.person_name !== null) face.person = { id: r.person_id, name: r.person_name };
       else if (suggestion) face.suggestion = suggestion;
+      else if (r.stranger_id !== null && r.stranger_photos >= STRANGER_LABEL_PHOTOS) {
+        face.stranger = { label: `Unknown ${r.stranger_id}`, photoCount: r.stranger_photos };
+      }
       return face;
     });
 }

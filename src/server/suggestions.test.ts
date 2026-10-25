@@ -29,7 +29,10 @@ afterEach(async () => {
   await api.close();
 });
 
-const suggestedNames = (faces: { suggestion?: { name: string } }[]) => faces.map((face) => face.suggestion?.name);
+const strangerLabels = (faces: { stranger?: { label: string; photoCount: number } }[]) =>
+  faces.map((face) => face.stranger && `${face.stranger.label}, in ${face.stranger.photoCount} Photos`);
+
+const suggestedNames =(faces: { suggestion?: { name: string } }[]) => faces.map((face) => face.suggestion?.name);
 
 describe("Suggestions", () => {
   it("suggests the Person of a named Face for the same Face in another Photo", async () => {
@@ -106,5 +109,25 @@ describe("Suggestions", () => {
       expect((await api.call("POST", `/api/faces/${suggested!.id}/suggestion/${verb}`, {})).status).toBe(400);
     }
     expect((await api.upload("crew-rotated.jpg")).faces[0]!.suggestion).toEqual(neil);
+  });
+});
+
+describe("Strangers", () => {
+  it("labels unnamed look-alike Faces across two Photos alike, with how many Photos they span", async () => {
+    const first = (await api.upload("crew.jpg")).faces;
+    // A Stranger in a single Photo shows no label.
+    expect(strangerLabels(first)).toEqual([undefined, undefined, undefined]);
+
+    const second = (await api.upload("crew-rotated.jpg")).faces;
+
+    const labels = strangerLabels(second);
+    expect(labels).toEqual([
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+    ]);
+    expect(new Set(labels).size).toBe(3);
+    expect(strangerLabels((await api.upload("crew.jpg")).faces)).toEqual(labels);
+    expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
   });
 });
