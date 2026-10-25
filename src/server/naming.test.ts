@@ -198,6 +198,17 @@ describe("a Photo stored under an older model version", () => {
     expect(await api.upload("crew.jpg")).toMatchObject({ faces: reopened });
   });
 
+  it('is detected again even when every Face was marked "Not a face"', async () => {
+    const old = (await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces;
+    for (const face of old) await api.markNotAFace(face.id);
+    expect((await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces).toEqual([]);
+
+    const reopened = (await api.upload("crew.jpg")).faces;
+
+    // No new box mostly overlaps an old one, so none inherits its mark.
+    expect(reopened).toHaveLength(3);
+  });
+
   it("leaves a new Face unnamed when no old box mostly overlaps it", async () => {
     const old = (await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces;
     await api.nameFace(old[0]!.id, "Neil");
@@ -224,9 +235,11 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
       // 512 float32s: an embedding, not pixels.
       expect((row["embedding"] as Uint8Array).byteLength).toBe(512 * 4);
     }
-    // A Stranger is only a number, and a rejected Suggestion only a pair of ids.
-    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "rejected_suggestions", "strangers"]);
+    // A Stranger is only a number, a rejected Suggestion only a pair of ids, and
+    // a Photo only its hash and the version of the models that read it.
+    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "photos", "rejected_suggestions", "strangers"]);
     for (const row of api.storedRows()["strangers"]!) expect(Object.keys(row)).toEqual(["id"]);
+    for (const row of api.storedRows()["photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
   });
 });
 

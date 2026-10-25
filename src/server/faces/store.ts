@@ -16,6 +16,10 @@ import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
  * Each rejected Suggestion is kept as the pair of Face and Person, so that it
  * is never suggested again. A Stranger is only a number: its Faces point to it.
  * AUTOINCREMENT keeps a number from ever being reused once its Stranger empties.
+ *
+ * Each Photo with stored Faces also keeps the model version that last read it,
+ * by its hash, so that a model change detects it again even when all its Faces
+ * are "Not a face" and so carry no model version of their own.
  */
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS people (
@@ -46,6 +50,10 @@ const SCHEMA = `
     face_id   TEXT NOT NULL REFERENCES faces (id) ON DELETE CASCADE,
     person_id TEXT NOT NULL REFERENCES people (id) ON DELETE CASCADE,
     PRIMARY KEY (face_id, person_id)
+  );
+  CREATE TABLE IF NOT EXISTS photos (
+    sha256        TEXT PRIMARY KEY,
+    model_version TEXT NOT NULL
   );
 `;
 
@@ -104,6 +112,10 @@ export function openFaceStore(path: string) {
     db.exec("ALTER TABLE faces ADD COLUMN stranger_id INTEGER REFERENCES strangers (id) ON DELETE SET NULL");
   }
   db.exec("CREATE INDEX IF NOT EXISTS faces_by_stranger ON faces (stranger_id)");
+  // faces.db files made before the photos table: each Photo was read by the version its Faces carry.
+  db.exec(`
+    INSERT OR IGNORE INTO photos (sha256, model_version)
+    SELECT photo_sha256, MAX(model_version) FROM faces WHERE model_version IS NOT NULL GROUP BY photo_sha256`);
 
   const facesOfPhotoQuery = db.prepare(`
     SELECT faces.id, box_x, box_y, box_width, box_height, model_version, person_id, not_a_face, stranger_id,
@@ -174,10 +186,14 @@ export function openFaceStore(path: string) {
   const photoOfFace = db.prepare("SELECT photo_sha256 FROM faces WHERE id = ? AND not_a_face = 0");
   const findPersonById = db.prepare("SELECT id, name FROM people WHERE id = ?");
 
+  const modelVersionOfPhoto = db.prepare("SELECT model_version FROM photos WHERE sha256 = ?");
+  const setModelVersionOfPhoto = db.prepare("INSERT OR REPLACE INTO photos (sha256, model_version) VALUES (?, ?)");
+  const forgetPhoto = db.prepare("DELETE FROM photos WHERE sha256 = ?");
+
   const rowsOf = (sha256: string) => facesOfPhotoQuery.all(sha256) as FaceRow[];
-  // Faces marked "Not a face" carry no model version, so they never make a Photo stale.
-  const isCurrent = (rows: FaceRow[], modelVersion: string) =>
-    rows.length > 0 && rows.every((r) => r.model_version === null || r.model_version === modelVersion);
+  /** True when these models last read the Photo, and it has stored Faces. */
+  const isCurrent = ({ sha256, modelVersion }: PhotoKey) =>
+    (modelVersionOfPhoto.get(sha256) as { model_version: string } | undefined)?.model_version === modelVersion;
 
   /**
    * The Faces of a stored Photo as the Analysis shows them, after placing each
@@ -301,13 +317,12 @@ export function openFaceStore(path: string) {
      * Face whose box it mostly overlaps.
      */
     async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<StoredFace[]> {
-      const stored = rowsOf(photo.sha256);
-      if (isCurrent(stored, photo.modelVersion)) return transaction(() => present(photo.sha256));
+      if (isCurrent(photo)) return transaction(() => present(photo.sha256));
       const detected = await detect();
       return transaction(() => {
-        const old = rowsOf(photo.sha256);
         // Another request for the same Photo may have stored it while this one was detecting.
-        if (isCurrent(old, photo.modelVersion)) return present(photo.sha256);
+        if (isCurrent(photo)) return present(photo.sha256);
+        const old = rowsOf(photo.sha256);
         const heirs = inheritMarks(old, detected);
         deleteFacesOfPhoto.run(photo.sha256);
         detected.forEach((face, i) => {
@@ -326,6 +341,9 @@ export function openFaceStore(path: string) {
             notAFace ? 1 : 0,
           );
         });
+        // A Photo without Faces keeps nothing, not even its hash, so it is detected on every open.
+        if (detected.length > 0) setModelVersionOfPhoto.run(photo.sha256, photo.modelVersion);
+        else forgetPhoto.run(photo.sha256);
         deleteEmptyStrangers.run();
         return present(photo.sha256);
       });
@@ -433,6 +451,7 @@ export function openFaceStore(path: string) {
       transaction(() => {
         db.exec("DELETE FROM faces");
         db.exec("DELETE FROM people");
+        db.exec("DELETE FROM photos");
         // AUTOINCREMENT's counter survives, so Stranger numbers are never reused (spec #12).
         db.exec("DELETE FROM strangers");
       });
