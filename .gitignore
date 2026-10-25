@@ -19,4 +19,8 @@ dist/
 *.[cC][rR][23]
 *.[nN][eE][fF]
 *.[aA][rR][wW]
+*.[oO][rR][fF]
+*.[rR][wW]2
+*.[rR][aA][fF]
+*.[aA][vV][iI][fF]
 !fixtures/**

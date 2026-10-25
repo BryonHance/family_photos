@@ -34,6 +34,16 @@ _Avoid_: Formatted value, pretty value, human value
 The camera manufacturer's proprietary Section, often undocumented.
 _Avoid_: Vendor data, MakerNote tags
 
+### People in the photo
+
+**Face**:
+A region of a Photo that shows one person's face.
+_Avoid_: Head, detection, face crop
+
+**Person**:
+Someone the user has named, recognised by their Faces across Photos.
+_Avoid_: Subject, identity, cluster, people tag
+
 ### What the viewer works out
 
 **Date taken**:
