@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { AnalyzeError, AnalyzeErrorKind } from "../shared/analysis.ts";
 import { analyzePhoto, UnsupportedFileError, type AnalyzerConfig } from "./analyzer.ts";
+import { faceRoutes } from "./faces/api.ts";
 
 export type AppConfig = AnalyzerConfig & {
   /** The largest Photo accepted, in bytes. Production uses 200 MB. */
@@ -52,6 +53,8 @@ export function createApp(config: AppConfig) {
       }
     },
   );
+
+  app.route("/api", faceRoutes(config.faceStore));
 
   return app;
 }

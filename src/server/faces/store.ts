@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { Box, PersonRef } from "../../shared/analysis.ts";
+import type { Box, PersonRef, PersonSummary } from "../../shared/analysis.ts";
 
 /**
  * faces.db holds face data and nothing else (ADR-0002): per Face, its box, the
@@ -77,6 +77,15 @@ export function openFaceStore(path: string) {
     INSERT INTO faces (id, photo_sha256, box_x, box_y, box_width, box_height, model_version, embedding, person_id, not_a_face)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const deleteFacesOfPhoto = db.prepare("DELETE FROM faces WHERE photo_sha256 = ?");
+  const findFace = db.prepare("SELECT not_a_face FROM faces WHERE id = ?");
+  const setPersonOfFace = db.prepare("UPDATE faces SET person_id = ? WHERE id = ?");
+  const findPersonByName = db.prepare("SELECT id, name FROM people WHERE name = ?");
+  const insertPerson = db.prepare("INSERT INTO people (id, name) VALUES (?, ?)");
+  const listPeople = db.prepare(`
+    SELECT people.id, people.name, COUNT(faces.id) AS faceCount
+    FROM people LEFT JOIN faces ON faces.person_id = people.id
+    GROUP BY people.id
+    ORDER BY people.name`);
 
   const rowsOf = (sha256: string) => facesOfPhotoQuery.all(sha256) as FaceRow[];
   // Faces marked "Not a face" carry no model version, so they never make a Photo stale.
@@ -133,8 +142,33 @@ export function openFaceStore(path: string) {
       });
     },
 
+    /**
+     * Names a Face: the Person with this name, ignoring case and spaces around
+     * it, or a new Person. Undefined when there is no such Face, or it is marked "Not a face".
+     */
+    nameFace(faceId: string, name: string): PersonRef | undefined {
+      return transaction(() => {
+        const face = findFace.get(faceId) as { not_a_face: number } | undefined;
+        if (!face || face.not_a_face === 1) return undefined;
+        const person = personNamed(name);
+        setPersonOfFace.run(person.id, faceId);
+        return person;
+      });
+    },
+
+    /** Every Person, by name, with how many Faces are named as them. */
+    people: () => listPeople.all() as PersonSummary[],
+
     close: () => db.close(),
   };
+
+  function personNamed(name: string): PersonRef {
+    const existing = findPersonByName.get(name) as PersonRef | undefined;
+    if (existing) return existing;
+    const person = { id: randomUUID(), name };
+    insertPerson.run(person.id, person.name);
+    return person;
+  }
 }
 
 function visible(rows: FaceRow[]): StoredFace[] {
