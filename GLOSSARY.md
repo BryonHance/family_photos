@@ -44,6 +44,14 @@ _Avoid_: Head, detection, face crop
 Someone the user has named, recognised by their Faces across Photos.
 _Avoid_: Subject, identity, cluster, people tag
 
+**Suggestion**:
+A Person the viewer thinks a Face shows, waiting for the user to confirm or reject it.
+_Avoid_: Match, guess, prediction, auto-tag
+
+**Stranger**:
+A set of unnamed Faces the viewer believes show the same person, shown as "Unknown 4".
+_Avoid_: Cluster, group, unknown person
+
 ### What the viewer works out
 
 **Date taken**:
