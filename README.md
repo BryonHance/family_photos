@@ -26,11 +26,21 @@ Anyone forking this repository for another purpose must check the licence for th
 
 ## Face data
 
-Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, and the name of each Person. It holds nothing else. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
+Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, its Person or Stranger number, the Suggestions rejected for it, and the name of each Person. It holds nothing else. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
 
 - In Docker, `faces.db` lives in the named volume `face-data`, mounted at `/app/data`. In development it is `data/faces.db`, which git ignores. Set `FACES_DB` to put it elsewhere.
 - **Keep the `face-data` volume out of every backup that leaves the server**, such as cloud or off-site backups. If the server is lost, open the Photos again to name each Person again.
 - "Delete all face data" in the People panel empties the file. Removing the volume (`docker compose down` then `docker volume rm family_photos_face-data`, or whatever name `docker volume ls` shows) also deletes it.
+
+### Tuning Suggestions and Strangers
+
+A Face is suggested as a Person when its embedding's cosine similarity to one of their named Faces is at least 0.5, and joins a Stranger at 0.6. Both are starting points, set in `src/server/faces/thresholds.ts`. To check them, put a small sample of your own Photos in a folder outside the repository, one subfolder per person, each Photo showing that person as its largest Face, then run:
+
+```sh
+pixi run similarity /path/to/sample
+```
+
+It prints how similar Faces of the same person and of different people are, and what share of each pair lies above each threshold. It stores nothing and prints only numbers. Never commit the sample.
 
 ## Deployment
 
