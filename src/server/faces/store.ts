@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import { iou } from "./overlap.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
@@ -526,11 +527,4 @@ function inheritMarks(old: FaceRow[], detected: NewFace[]): (FaceRow | undefined
     used.add(row.id);
   }
   return heirs;
-}
-
-function iou(a: Box, b: Box): number {
-  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-  const overlap = w * h;
-  return overlap / (a.width * a.height + b.width * b.height - overlap);
 }

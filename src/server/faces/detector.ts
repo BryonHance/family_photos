@@ -3,10 +3,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ort from "onnxruntime-node";
 import sharp from "sharp";
+import type { Box } from "../../shared/analysis.ts";
 import { ALIGNED_SIZE, alignFace, type RgbImage } from "./align.ts";
-
-/** A rectangle in fractions of the upright Photo's width and height. */
-export type Box = { x: number; y: number; width: number; height: number };
+import { iou } from "./overlap.ts";
 
 /** A point in fractions of the upright Photo's width and height. */
 export type Point = { x: number; y: number };
@@ -225,18 +224,12 @@ function decodeStride(stride: number, scores: Float32Array, boxes: Float32Array,
 function nonMaximumSuppression(candidates: Candidate[]): Candidate[] {
   const kept: Candidate[] = [];
   for (const candidate of [...candidates].sort((a, b) => b.score - a.score)) {
-    if (kept.every((k) => iou(k, candidate) <= NMS_IOU_THRESHOLD)) kept.push(candidate);
+    if (kept.every((k) => iou(boxOf(k), boxOf(candidate)) <= NMS_IOU_THRESHOLD)) kept.push(candidate);
   }
   return kept;
 }
 
-function iou(a: Candidate, b: Candidate): number {
-  const w = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1));
-  const h = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
-  const overlap = w * h;
-  const area = (c: Candidate) => (c.x2 - c.x1) * (c.y2 - c.y1);
-  return overlap / (area(a) + area(b) - overlap);
-}
+const boxOf = (c: Candidate): Box => ({ x: c.x1, y: c.y1, width: c.x2 - c.x1, height: c.y2 - c.y1 });
 
 /** From pixels of the scaled Photo in the letterbox to fractions of the upright Photo. */
 function toFractions(c: Candidate, width: number, height: number): Omit<DetectedFace, "embedding"> {
