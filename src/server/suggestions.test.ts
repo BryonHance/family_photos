@@ -167,6 +167,22 @@ describe("Strangers", () => {
     expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
   });
 
+  it("lets two Faces of one Photo join the same Stranger, each the one of its most similar Face", async () => {
+    await api.upload("crew.jpg", { detector: facesWith({ 0: 1 }, { 1: 1 }, { 2: 1 }) });
+
+    const twice = (
+      await api.upload("armstrong-twice.jpg", {
+        detector: facesWith({ 0: 0.9, 3: Math.sqrt(0.19) }, { 0: 0.8, 4: 0.6 }),
+      })
+    ).faces;
+
+    expect(strangerLabels(twice)).toEqual([
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+      expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
+    ]);
+    expect(twice[1]!.stranger).toEqual(twice[0]!.stranger);
+  });
+
   it("the Faces of a deleted Person join a Stranger again, under a number never used before", async () => {
     await api.upload("crew.jpg");
     const before = (await api.upload("crew-rotated.jpg")).faces;

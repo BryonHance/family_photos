@@ -191,17 +191,16 @@ export function openFaceStore(path: string) {
   /**
    * Places each unnamed Face of a Photo that has no Suggestion and no Stranger:
    * it joins the Stranger of its most similar unnamed Face in another Photo, at
-   * or above STRANGER_THRESHOLD, or starts a new one. Two Faces of one Photo
-   * never join the same Stranger, the closest pairs being matched first, and a
-   * Face never joins a Stranger with a Face named as a Person it rejected.
-   * Strangers never merge. True when any Face was placed.
+   * or above STRANGER_THRESHOLD, or starts a new one. Each Face chooses on its
+   * own, so two Faces of one Photo may join the same Stranger. A Face never
+   * joins a Stranger with a Face named as a Person it rejected. Strangers never
+   * merge. True when any Face was placed.
    */
   function joinStrangers(sha256: string, suggestions: Map<string, PersonRef>): boolean {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
     const waiting = own.filter((f) => f.person_id === null && f.stranger_id === null && !suggestions.has(f.id));
     const modelVersion = waiting[0]?.model_version;
     if (modelVersion == null) return false;
-    const taken = new Set(own.map((f) => f.stranger_id).filter((id) => id !== null));
     const barred = new Set(
       (barredStrangers.all(sha256) as { face_id: string; stranger_id: number }[]).map((r) => `${r.face_id} ${r.stranger_id}`),
     );
@@ -209,24 +208,15 @@ export function openFaceStore(path: string) {
       .filter((m) => m.photo_sha256 !== sha256)
       .map((m) => ({ strangerId: m.stranger_id, embedding: embeddingOf(m.embedding) }));
 
-    const pairs: { faceId: string; strangerId: number; score: number }[] = [];
     for (const face of waiting) {
       const embedding = embeddingOf(face.embedding);
+      let nearest: { strangerId: number; score: number } | undefined;
       for (const member of members) {
         if (barred.has(`${face.id} ${member.strangerId}`)) continue;
         const score = cosine(embedding, member.embedding);
-        if (score >= STRANGER_THRESHOLD) pairs.push({ faceId: face.id, strangerId: member.strangerId, score });
+        if (score >= STRANGER_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { strangerId: member.strangerId, score };
       }
-    }
-    const placed = new Set<string>();
-    for (const { faceId, strangerId } of pairs.sort((a, b) => b.score - a.score)) {
-      if (placed.has(faceId) || taken.has(strangerId)) continue;
-      setStrangerOfFace.run(strangerId, faceId);
-      placed.add(faceId);
-      taken.add(strangerId);
-    }
-    for (const face of waiting) {
-      if (!placed.has(face.id)) setStrangerOfFace.run(newStranger.run().lastInsertRowid, face.id);
+      setStrangerOfFace.run(nearest?.strangerId ?? newStranger.run().lastInsertRowid, face.id);
     }
     return true;
   }
