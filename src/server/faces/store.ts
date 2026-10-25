@@ -149,6 +149,8 @@ export function openFaceStore(path: string) {
     JOIN faces AS face ON face.id = rejected_suggestions.face_id
     JOIN faces AS named ON named.person_id = rejected_suggestions.person_id
     WHERE face.photo_sha256 = ? AND named.stranger_id IS NOT NULL`);
+  const photosOfPerson = db.prepare("SELECT DISTINCT photo_sha256 FROM faces WHERE person_id = ?");
+  const leaveStrangers = db.prepare("UPDATE faces SET stranger_id = NULL WHERE person_id = ?");
   const newStranger = db.prepare("INSERT INTO strangers DEFAULT VALUES");
   const setStrangerOfFace = db.prepare("UPDATE faces SET stranger_id = ? WHERE id = ?");
   const deleteEmptyStrangers = db.prepare(
@@ -392,8 +394,20 @@ export function openFaceStore(path: string) {
       });
     },
 
-    /** Deletes a Person; their Faces stay stored, unnamed. False when there is no such Person. */
-    deletePerson: (personId: string): boolean => deletePerson.run(personId).changes > 0,
+    /**
+     * Deletes a Person; their Faces stay stored, unnamed, and join Strangers
+     * again by the usual rule. False when there is no such Person.
+     */
+    deletePerson(personId: string): boolean {
+      return transaction(() => {
+        const photos = photosOfPerson.all(personId) as { photo_sha256: string }[];
+        leaveStrangers.run(personId);
+        if (deletePerson.run(personId).changes === 0) return false;
+        deleteEmptyStrangers.run();
+        for (const { photo_sha256 } of photos) present(photo_sha256);
+        return true;
+      });
+    },
 
     /**
      * Deletes every Face and Person, then rewrites the file so that no deleted

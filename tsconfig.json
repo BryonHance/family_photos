@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "types": ["node", "vite/client", "@testing-library/jest-dom/vitest"]
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "scripts", "vite.config.ts", "vitest.config.ts"]
 }

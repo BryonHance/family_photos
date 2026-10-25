@@ -130,4 +130,37 @@ describe("Strangers", () => {
     expect(strangerLabels((await api.upload("crew.jpg")).faces)).toEqual(labels);
     expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
   });
+
+  it("the Faces of a deleted Person join a Stranger again, under a number never used before", async () => {
+    await api.upload("crew.jpg");
+    const before = (await api.upload("crew-rotated.jpg")).faces;
+    const usedLabels = before.map((face) => face.stranger!.label);
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    await api.confirmSuggestion(before[0]!.id, neil.id);
+
+    await api.deletePerson(neil.id);
+
+    const crew = (await api.upload("crew.jpg")).faces;
+    const rotated = (await api.upload("crew-rotated.jpg")).faces;
+    expect(crew[0]!.person).toBeUndefined();
+    expect(crew[0]!.stranger).toEqual(rotated[0]!.stranger);
+    expect(crew[0]!.stranger?.photoCount).toBe(2);
+    expect(usedLabels).not.toContain(crew[0]!.stranger?.label);
+    // The other two Strangers are untouched.
+    expect(strangerLabels(rotated).slice(1)).toEqual(strangerLabels(before).slice(1));
+  });
+
+  it("a Stranger left with Faces in one Photo shows no label", async () => {
+    const [, collins] = (await api.upload("crew.jpg")).faces;
+    await api.upload("crew-rotated.jpg");
+
+    await api.markNotAFace(collins!.id);
+
+    expect(strangerLabels((await api.upload("crew-rotated.jpg")).faces)).toEqual([
+      expect.stringMatching(/, in 2 Photos$/),
+      undefined,
+      expect.stringMatching(/, in 2 Photos$/),
+    ]);
+  });
 });
