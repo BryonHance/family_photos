@@ -36,8 +36,19 @@ export type Summary = {
 /** A rectangle in fractions of the upright Photo's width and height, from its top left. */
 export type Box = { x: number; y: number; width: number; height: number };
 
-/** A Face found in the Photo. */
-export type Face = { box: Box };
+/** A Person as a Face refers to them. */
+export type PersonRef = { id: string; name: string };
+
+/** A Face found in the Photo, stored so that it can be named (ADR-0002). */
+export type Face = {
+  id: string;
+  box: Box;
+  /** Present once the Face is named. */
+  person?: PersonRef;
+};
+
+/** A Person as the People panel lists them. */
+export type PersonSummary = PersonRef & { faceCount: number };
 
 export type Analysis = {
   photo: { name: string; sizeBytes: number; mimeType: string };
@@ -45,7 +56,7 @@ export type Analysis = {
   warnings: Warning[];
   summary: Summary;
   sections: Section[];
-  /** Ordered left to right. Empty when there are none, and for TIFF and RAW. */
+  /** Ordered left to right. Empty when there are none, and for TIFF and RAW. Faces marked "Not a face" are left out. */
   faces: Face[];
 };
 

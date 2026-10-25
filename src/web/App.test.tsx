@@ -469,8 +469,8 @@ it("shows a placeholder instead of a preview when a Photo has no preview", async
 const withFaces: Analysis = {
   ...analysis,
   faces: [
-    { box: { x: 0.1, y: 0.2, width: 0.15, height: 0.25 } },
-    { box: { x: 0.6, y: 0.3, width: 0.1, height: 0.2 } },
+    { id: "face-1", box: { x: 0.1, y: 0.2, width: 0.15, height: 0.25 } },
+    { id: "face-2", box: { x: 0.6, y: 0.3, width: 0.1, height: 0.2 } },
   ],
 };
 

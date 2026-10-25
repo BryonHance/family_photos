@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import { openFaceStore } from "./faces/store.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
 const modelsDir = join(import.meta.dirname, "../../models");
@@ -27,7 +28,7 @@ afterAll(async () => {
 });
 
 async function analyze(fixtureName: string): Promise<Analysis> {
-  const app = createApp({ exiftool, tempDir, faceDetector, maxUploadBytes: 1024 * 1024 });
+  const app = createApp({ exiftool, tempDir, faceDetector, faceStore: openFaceStore(":memory:"), maxUploadBytes: 1024 * 1024 });
   const form = new FormData();
   form.append("photo", new File([await readFile(fixture(fixtureName))], fixtureName));
   const res = await app.request("/api/analyze", { method: "POST", body: form });

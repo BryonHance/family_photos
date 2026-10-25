@@ -27,3 +27,6 @@ dist/
 
 # Face models, fetched by `pixi run models` (non-commercial licence; never committed)
 models/
+
+# faces.db in development: face embeddings are biometric data (ADR-0002)
+data/

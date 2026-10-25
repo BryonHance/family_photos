@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis, Section } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import { openFaceStore } from "./faces/store.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
@@ -28,7 +29,7 @@ afterAll(async () => {
 const testUploadLimit = 5_000;
 
 function send(form: FormData, maxUploadBytes = testUploadLimit) {
-  const app = createApp({ exiftool, tempDir, faceDetector, maxUploadBytes });
+  const app = createApp({ exiftool, tempDir, faceDetector, faceStore: openFaceStore(":memory:"), maxUploadBytes });
   return app.request("/api/analyze", { method: "POST", body: form });
 }
 
