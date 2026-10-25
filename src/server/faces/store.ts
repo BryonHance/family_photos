@@ -12,6 +12,9 @@ import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
  *
  * A Face marked "Not a face" keeps only its box and the Photo's hash: its
  * embedding, Person and model version are cleared.
+ *
+ * Each rejected Suggestion is kept as the pair of Face and Person, so that it
+ * is never suggested again.
  */
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS people (
@@ -34,6 +37,11 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS faces_by_photo ON faces (photo_sha256);
   CREATE INDEX IF NOT EXISTS faces_by_person ON faces (person_id);
+  CREATE TABLE IF NOT EXISTS rejected_suggestions (
+    face_id   TEXT NOT NULL REFERENCES faces (id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES people (id) ON DELETE CASCADE,
+    PRIMARY KEY (face_id, person_id)
+  );
 `;
 
 /** A Face as the store returns it: what the Analysis shows. */
@@ -107,6 +115,13 @@ export function openFaceStore(path: string) {
   const embeddingsOfPhoto = db.prepare(
     "SELECT id, embedding, model_version, person_id FROM faces WHERE photo_sha256 = ? AND embedding IS NOT NULL",
   );
+  const rejectionsOfPhoto = db.prepare(`
+    SELECT face_id, rejected_suggestions.person_id
+    FROM rejected_suggestions JOIN faces ON faces.id = rejected_suggestions.face_id
+    WHERE photo_sha256 = ?`);
+  const rejectSuggestion = db.prepare("INSERT OR IGNORE INTO rejected_suggestions (face_id, person_id) VALUES (?, ?)");
+  const photoOfFace = db.prepare("SELECT photo_sha256 FROM faces WHERE id = ? AND not_a_face = 0");
+  const findPersonById = db.prepare("SELECT id, name FROM people WHERE id = ?");
 
   const rowsOf = (sha256: string) => facesOfPhotoQuery.all(sha256) as FaceRow[];
   // Faces marked "Not a face" carry no model version, so they never make a Photo stale.
@@ -118,9 +133,10 @@ export function openFaceStore(path: string) {
 
   /**
    * Each unnamed Face's Suggestion: the Person of its nearest named Face in
-   * another Photo, at or above SUGGESTION_THRESHOLD. A Person already named in
-   * this Photo is not suggested, and no two Faces of one Photo are suggested as
-   * the same Person: the closest pairs are matched first.
+   * another Photo, at or above SUGGESTION_THRESHOLD, unless the Face's user
+   * rejected that Person for it. A Person already named in this Photo is not
+   * suggested, and no two Faces of one Photo are suggested as the same Person:
+   * the closest pairs are matched first.
    */
   function suggestionsFor(sha256: string): Map<string, PersonRef> {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
@@ -133,11 +149,16 @@ export function openFaceStore(path: string) {
       .filter((row) => row.photo_sha256 !== sha256 && !namedHere.has(row.person_id))
       .map((row) => ({ person: { id: row.person_id, name: row.person_name }, embedding: embeddingOf(row.embedding) }));
 
+    const rejected = new Set(
+      (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => `${r.face_id} ${r.person_id}`),
+    );
+
     const pairs: { faceId: string; person: PersonRef; score: number }[] = [];
     for (const face of unnamed) {
       const embedding = embeddingOf(face.embedding);
       const best = new Map<string, { person: PersonRef; score: number }>();
       for (const candidate of named) {
+        if (rejected.has(`${face.id} ${candidate.person.id}`)) continue;
         const score = cosine(embedding, candidate.embedding);
         const known = best.get(candidate.person.id);
         if (!known || score > known.score) best.set(candidate.person.id, { person: candidate.person, score });
@@ -216,6 +237,31 @@ export function openFaceStore(path: string) {
         const person = personNamed(name);
         setPersonOfFace.run(person.id, faceId);
         return person;
+      });
+    },
+
+    /** Names a Face as the Person it was suggested as. */
+    confirmSuggestion(faceId: string, personId: string): PersonRef | "no-face" | "no-person" {
+      return transaction(() => {
+        if (!photoOfFace.get(faceId)) return "no-face";
+        const person = findPersonById.get(personId) as PersonRef | undefined;
+        if (!person) return "no-person";
+        setPersonOfFace.run(person.id, faceId);
+        return { id: person.id, name: person.name };
+      });
+    },
+
+    /**
+     * Remembers that a Face is not this Person, so they are never suggested for
+     * it again. Returns the Face as it now stands.
+     */
+    rejectSuggestion(faceId: string, personId: string): StoredFace | "no-face" | "no-person" {
+      return transaction(() => {
+        const photo = photoOfFace.get(faceId) as { photo_sha256: string } | undefined;
+        if (!photo) return "no-face";
+        if (!findPersonById.get(personId)) return "no-person";
+        rejectSuggestion.run(faceId, personId);
+        return present(photo.photo_sha256).find((face) => face.id === faceId)!;
       });
     },
 

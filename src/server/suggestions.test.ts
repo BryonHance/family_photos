@@ -42,4 +42,46 @@ describe("Suggestions", () => {
     expect(faces[0]!.person).toBeUndefined();
     expect(suggestedNames(faces)).toEqual(["Neil", undefined, undefined]);
   });
+
+  it("confirming a Suggestion names the Face", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    const [suggested] = (await api.upload("crew-rotated.jpg")).faces;
+
+    expect(await api.confirmSuggestion(suggested!.id, neil.id)).toEqual(neil);
+
+    const [reopened] = (await api.upload("crew-rotated.jpg")).faces;
+    expect(reopened!.person).toEqual(neil);
+    expect(reopened!.suggestion).toBeUndefined();
+    expect((await api.people()).map((p) => p.faceCount)).toEqual([2]);
+  });
+
+  it("a rejected Suggestion never returns, and ignoring one saves nothing", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    const [suggested] = (await api.upload("crew-rotated.jpg")).faces;
+    const ignored = await api.upload("crew-rotated.jpg");
+    expect(ignored.faces[0]!.suggestion).toEqual(neil);
+
+    const afterRejecting = await api.rejectSuggestion(suggested!.id, neil.id);
+
+    expect(afterRejecting.suggestion).toBeUndefined();
+    expect(afterRejecting.person).toBeUndefined();
+    const [reopened] = (await api.upload("crew-rotated.jpg")).faces;
+    expect(reopened!.suggestion).toBeUndefined();
+    expect(reopened!.person).toBeUndefined();
+  });
+
+  it("refuses to confirm or reject for an unknown Face or Person", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    const [suggested] = (await api.upload("crew-rotated.jpg")).faces;
+
+    for (const verb of ["confirm", "reject"]) {
+      expect((await api.call("POST", `/api/faces/no-such-face/suggestion/${verb}`, { personId: neil.id })).status).toBe(404);
+      expect((await api.call("POST", `/api/faces/${suggested!.id}/suggestion/${verb}`, { personId: "nobody" })).status).toBe(404);
+      expect((await api.call("POST", `/api/faces/${suggested!.id}/suggestion/${verb}`, {})).status).toBe(400);
+    }
+    expect((await api.upload("crew-rotated.jpg")).faces[0]!.suggestion).toEqual(neil);
+  });
 });

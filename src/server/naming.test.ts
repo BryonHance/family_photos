@@ -155,10 +155,13 @@ describe("People", () => {
     const faces = (await api.upload("crew.jpg")).faces;
     await api.nameFace(faces[0]!.id, "Neil");
     await api.markNotAFace(faces[1]!.id);
+    await api.rejectSuggestion(faces[2]!.id, (await api.nameFace(faces[2]!.id, "Buzz")).id);
 
     await api.deleteAllFaceData();
 
-    expect(api.storedRows()).toEqual({ people: [], faces: [] });
+    const tables = api.storedRows();
+    expect(Object.keys(tables)).toEqual(expect.arrayContaining(["people", "faces", "rejected_suggestions"]));
+    for (const [table, rows] of Object.entries(tables)) expect(rows, table).toEqual([]);
     expect(await api.people()).toEqual([]);
   });
 });

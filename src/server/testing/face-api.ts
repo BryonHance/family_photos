@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ExifTool } from "exiftool-vendored";
 import { expect } from "vitest";
-import type { Analysis, PersonSummary } from "../../shared/analysis.ts";
+import type { Analysis, Face, PersonSummary } from "../../shared/analysis.ts";
 import { createApp } from "../app.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import { openFaceStore } from "../faces/store.ts";
@@ -59,6 +59,11 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
 
     nameFace: (faceId: string, name: string) =>
       json<{ id: string; name: string }>(call("PUT", `/api/faces/${faceId}/person`, { name })),
+    confirmSuggestion: (faceId: string, personId: string) =>
+      json<{ id: string; name: string }>(call("POST", `/api/faces/${faceId}/suggestion/confirm`, { personId })),
+    /** Returns the Face as it now stands. */
+    rejectSuggestion: (faceId: string, personId: string) =>
+      json<Face>(call("POST", `/api/faces/${faceId}/suggestion/reject`, { personId })),
     markNotAFace: async (faceId: string) => expect((await call("POST", `/api/faces/${faceId}/not-a-face`)).status).toBe(204),
     people: async () => (await json<{ people: PersonSummary[] }>(call("GET", "/api/people"))).people,
     renamePerson: (personId: string, name: string) =>
