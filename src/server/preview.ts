@@ -1,10 +1,13 @@
 import decodeHeic from "heic-decode";
 import jpeg from "jpeg-js";
 import type { Preview } from "../shared/analysis.ts";
+import type { Pixels } from "./pixels.ts";
 
 /** Formats every browser can show from its own copy of the file. */
 const BROWSER_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const HEIC_TYPES = new Set(["image/heic", "image/heif"]);
+
+export const isHeic = (mimeType: string) => HEIC_TYPES.has(mimeType);
 
 /** How a Photo records which way up it goes, as ExifTool reads it. */
 export type Orientation = {
@@ -15,30 +18,37 @@ export type Orientation = {
 };
 
 /**
- * How the browser should show a Photo, by its MIME type as ExifTool reads it.
- * HEIC is converted here and returned inline, since the server keeps nothing (ADR-0001).
- * TIFF and RAW have no preview in v1.
+ * Decodes a HEIC to upright RGBA pixels. libheif applies the HEIF rotation and
+ * mirroring (irot/imir), which is how an iPhone records orientation. An iPhone
+ * also writes an EXIF Orientation that describes that same turn, so it is
+ * applied only when the HEIC has no irot or imir box; applying both would
+ * rotate the Photo twice.
  */
-export async function previewFor(mimeType: string, bytes: Uint8Array, orientation: Orientation): Promise<Preview> {
-  if (HEIC_TYPES.has(mimeType)) {
-    // libheif applies the HEIF rotation and mirroring (irot/imir), which is how an
-    // iPhone records orientation. An iPhone also writes an EXIF Orientation that
-    // describes that same turn, so it is applied only when the HEIC has no irot or
-    // imir box; applying both would rotate the Photo twice.
-    const decoded = await decodeHeic({ buffer: bytes });
-    const upright = orientation.heifTransform ? decoded : applyExifOrientation(decoded, orientation.exif ?? 1);
-    const { data } = jpeg.encode({ ...upright, data: Buffer.from(upright.data.buffer, upright.data.byteOffset, upright.data.byteLength) }, 90);
-    return { kind: "converted", mimeType: "image/jpeg", base64: data.toString("base64") };
+export async function decodeUprightHeic(bytes: Uint8Array, orientation: Orientation): Promise<Pixels<4>> {
+  const { width, height, data } = await decodeHeic({ buffer: bytes });
+  const decoded = { width, height, channels: 4 as const, data };
+  return orientation.heifTransform ? decoded : applyExifOrientation(decoded, orientation.exif ?? 1);
+}
+
+/**
+ * How the browser should show a Photo, by its MIME type as ExifTool reads it.
+ * A HEIC, given as its upright pixels, is converted here and returned inline,
+ * since the server keeps nothing (ADR-0001). TIFF and RAW have no preview in v1.
+ */
+export function previewFor(mimeType: string, uprightHeic?: Pixels<4>): Preview {
+  if (isHeic(mimeType) && uprightHeic) {
+    const { width, height, data } = uprightHeic;
+    const encoded = jpeg.encode({ width, height, data: Buffer.from(data.buffer, data.byteOffset, data.byteLength) }, 90);
+    return { kind: "converted", mimeType: "image/jpeg", base64: encoded.data.toString("base64") };
   }
   if (BROWSER_TYPES.has(mimeType)) return { kind: "client" };
   return { kind: "none" };
 }
 
-type Pixels = { width: number; height: number; data: Uint8ClampedArray };
-
 /** Turns RGBA pixels the way an EXIF Orientation (1 to 8) says to view them. */
-function applyExifOrientation({ width, height, data }: Pixels, orientation: number): Pixels {
-  if (orientation < 2 || orientation > 8) return { width, height, data };
+function applyExifOrientation(pixels: Pixels<4>, orientation: number): Pixels<4> {
+  const { width, height, data } = pixels;
+  if (orientation < 2 || orientation > 8) return pixels;
   const swaps = orientation >= 5;
   const out = { width: swaps ? height : width, height: swaps ? width : height };
   // For each pixel of the upright image, where it sits in the stored one.
@@ -52,13 +62,13 @@ function applyExifOrientation({ width, height, data }: Pixels, orientation: numb
     8: (x, y) => [width - 1 - y, x],
   };
   const from = source[orientation]!;
-  const pixels = new Uint8ClampedArray(data.length);
+  const upright = new Uint8ClampedArray(data.length);
   for (let y = 0; y < out.height; y++) {
     for (let x = 0; x < out.width; x++) {
       const [sx, sy] = from(x, y);
       const s = (sy * width + sx) * 4;
-      pixels.set(data.subarray(s, s + 4), (y * out.width + x) * 4);
+      upright.set(data.subarray(s, s + 4), (y * out.width + x) * 4);
     }
   }
-  return { ...out, data: pixels };
+  return { ...out, channels: 4, data: upright };
 }

@@ -8,3 +8,5 @@ node_modules
 dist
 fixtures
 docs
+models
+data

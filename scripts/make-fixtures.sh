@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the test fixtures. Every fixture is generated here, never a real
 # family Photo, because the repo is public (ADR-0001). Needs ImageMagick and
-# heif-enc (libheif).
+# heif-enc (libheif), and curl for the public-domain crew portrait.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 exiftool="$(ls node_modules/.pnpm/exiftool-vendored.pl@*/node_modules/exiftool-vendored.pl/bin/exiftool | head -1)"
@@ -119,3 +119,34 @@ magick -size 64x48 gradient:steelblue-orange -strip -compress zip "$out/scan.tif
 # A minimal RAW: a TIFF that ExifTool recognizes as DNG from its DNGVersion.
 cp "$out/scan.tif" "$out/raw.dng"
 "$exiftool" -q -overwrite_original -DNGVersion="1.4.0.0" -Make="Canon" -Model="Canon EOS R6" "$out/raw.dng"
+
+# Photos with known Faces, for face detection. NASA's Apollo 11 crew portrait
+# (S69-31739) is public domain as a work of the US government, so it is not a
+# family Photo; it is downloaded at a pinned checksum and shrunk. Upright, the
+# Faces are Armstrong (left), Collins (centre, highest) and Aldrin (right).
+curl --fail --location --silent --show-error -A "family-photos-fixtures" -o "$tmp/apollo11.jpg" \
+  "https://upload.wikimedia.org/wikipedia/commons/3/3d/Apollo_11_Crew.jpg"
+echo "ba9ccc7c8accc044ebe71fbe402255d45f4cb0fec67f2c9afbfb4ed71d671784  $tmp/apollo11.jpg" | sha256sum --check --quiet
+magick "$tmp/apollo11.jpg" -resize 800x800 -strip -quality 80 "$out/crew.jpg"
+
+# The same Photo stored sideways with EXIF Orientation 6 ("rotate 90 CW to
+# view"), as a phone held upright records it. Upright it matches crew.jpg.
+magick "$out/crew.jpg" -rotate -90 -strip -quality 80 "$out/crew-rotated.jpg"
+"$exiftool" -q -overwrite_original -Orientation#=6 "$out/crew-rotated.jpg"
+
+# The sideways pixels as a HEIC with EXIF Orientation 6 and no irot box.
+magick "$out/crew.jpg" -rotate -90 -strip "$tmp/crew-sideways.jpg"
+heif-enc -q 80 -o "$out/crew-oriented.heic" "$tmp/crew-sideways.jpg"
+"$exiftool" -q -overwrite_original -Orientation#=6 "$out/crew-oriented.heic"
+
+# The crew as a TIFF: the viewer finds no Faces in TIFF, even when it shows some.
+magick "$out/crew.jpg" -compress jpeg "$out/crew.tif"
+
+# A corner of the same Photo, background and Moon only, with no Faces.
+magick "$out/crew.jpg" -crop 300x180+0+0 +repage -quality 80 "$out/no-faces.jpg"
+
+# Armstrong twice in one Photo, for "two Faces in one Photo are never suggested
+# as the same Person": his head and shoulders cropped from crew.jpg, then beside
+# them the same crop mirrored. Mirroring makes the right-hand Face a slightly
+# weaker match for him than the left-hand one.
+magick "$out/crew.jpg" -crop 220x260+87+125 +repage \( +clone -flop \) +append -strip -quality 85 "$out/armstrong-twice.jpg"

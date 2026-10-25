@@ -1,5 +1,18 @@
-import { useEffect, useId, useRef, useState, type DragEvent } from "react";
-import type { Analysis, AnalyzeError, Field, Section, Summary, Warning } from "../shared/analysis.ts";
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from "react";
+import type {
+  Analysis,
+  AnalyzeError,
+  Face,
+  Field,
+  PersonRef,
+  PersonSummary,
+  Section,
+  Summary,
+  Warning,
+} from "../shared/analysis.ts";
+import { faceApi, messageOf } from "./faceApi.ts";
+import { FaceBoxes, FacesSection } from "./faces.tsx";
+import { PeoplePanel, type PeopleChange } from "./people.tsx";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -13,20 +26,127 @@ type ViewerState =
 export function App() {
   const [state, setState] = useState<ViewerState>({ status: "empty" });
   const [filter, setFilter] = useState("");
+  // Kept across Photos, like the filter, so hiding the boxes once keeps them hidden.
+  const [showBoxes, setShowBoxes] = useState(true);
   // The request for the Photo opened most recently. Opening another aborts it, so
   // a slower response for an earlier Photo can never replace a later one.
   const request = useRef<AbortController | null>(null);
+  // The Face whose naming form is open, if any.
+  const [selectedFaceId, setSelectedFaceId] = useState<string>();
+  // Every Person, for autocompleting names and for the People panel.
+  const [people, setPeople] = useState<PersonSummary[]>([]);
 
+  const previewUrl = state.status === "opened" ? state.previewUrl : undefined;
   useEffect(() => {
-    if (state.status !== "opened") return;
-    const { previewUrl } = state;
+    if (previewUrl === undefined) return;
     return () => URL.revokeObjectURL(previewUrl);
-  }, [state]);
+  }, [previewUrl]);
+
+  /** Changes the opened Photo's Faces in place, such as after one is named. */
+  function updateFaces(update: (faces: Face[]) => Face[]) {
+    setState((s) => (s.status === "opened" ? { ...s, analysis: { ...s.analysis, faces: update(s.analysis.faces) } } : s));
+  }
+
+  async function refreshPeople() {
+    try {
+      setPeople(await faceApi.people());
+    } catch {
+      // Autocomplete and the People panel keep the last list they had.
+    }
+  }
+
+  function selectFace(faceId: string) {
+    setSelectedFaceId(faceId);
+    void refreshPeople();
+  }
+
+  // Why the last ✓ or ✕ failed, if it did.
+  const [suggestionProblem, setSuggestionProblem] = useState<string>();
+
+  /** Shows a Face as named, and no other Face of the Photo as suggested to be the same Person. */
+  function showNamed(faceId: string, person: PersonRef) {
+    updateFaces((faces) =>
+      faces.map((face) =>
+        face.id === faceId
+          ? { id: face.id, box: face.box, person }
+          : face.suggestion?.id === person.id
+            ? { id: face.id, box: face.box }
+            : face,
+      ),
+    );
+  }
+
+  async function nameFace(faceId: string, name: string) {
+    const person = await faceApi.nameFace(faceId, name);
+    showNamed(faceId, person);
+    setSelectedFaceId(undefined);
+    await refreshPeople();
+  }
+
+  async function confirmSuggestion(faceId: string, suggested: PersonRef) {
+    setSuggestionProblem(undefined);
+    try {
+      showNamed(faceId, await faceApi.confirmSuggestion(faceId, suggested.id));
+    } catch (failure) {
+      setSuggestionProblem(messageOf(failure));
+      return;
+    }
+    await refreshPeople();
+  }
+
+  async function rejectSuggestion(faceId: string, suggested: PersonRef) {
+    setSuggestionProblem(undefined);
+    try {
+      const updated = await faceApi.rejectSuggestion(faceId, suggested.id);
+      updateFaces((faces) => faces.map((face) => (face.id === faceId ? updated : face)));
+    } catch (failure) {
+      setSuggestionProblem(messageOf(failure));
+    }
+  }
+
+  async function markNotAFace(faceId: string) {
+    await faceApi.markNotAFace(faceId);
+    updateFaces((faces) => faces.filter((face) => face.id !== faceId));
+    setSelectedFaceId(undefined);
+    await refreshPeople();
+  }
+
+  /** Keeps the opened Photo's names in step with a change made in the People panel. */
+  function onPeopleChanged(change: PeopleChange) {
+    /** The Person as they stand after the change: renamed, merged into another, or gone. */
+    const afterChange = (person: PersonRef | undefined): PersonRef | undefined => {
+      if (!person) return undefined;
+      switch (change.kind) {
+        case "renamed":
+          return person.id === change.person.id ? change.person : person;
+        case "merged":
+          return person.id === change.from ? change.into : person;
+        case "deleted":
+          return person.id === change.personId ? undefined : person;
+        case "deleted-all":
+          return undefined;
+      }
+    };
+    updateFaces((faces) =>
+      faces.map(({ person, suggestion, ...face }) => {
+        const nextPerson = afterChange(person);
+        const nextSuggestion = afterChange(suggestion);
+        return {
+          ...face,
+          ...(nextPerson && { person: nextPerson }),
+          ...(nextSuggestion && { suggestion: nextSuggestion }),
+        };
+      }),
+    );
+    void refreshPeople();
+  }
 
   async function openPhoto(photo: File) {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    setSelectedFaceId(undefined);
+    setSuggestionProblem(undefined);
     setState({ status: "analyzing", photoName: photo.name });
     let next: ViewerState;
     try {
@@ -66,7 +186,18 @@ export function App() {
       onDrop={onDrop}
     >
       <div className="photo">
-        {state.status === "opened" ? <PhotoPreview {...state} /> : <p className="hint">Drop a Photo here</p>}
+        {state.status === "opened" ? (
+          <PhotoPreview
+            {...state}
+            showBoxes={showBoxes}
+            selectedFaceId={selectedFaceId}
+            onSelectFace={selectFace}
+            onConfirmSuggestion={confirmSuggestion}
+            onRejectSuggestion={rejectSuggestion}
+          />
+        ) : (
+          <p className="hint">Drop a Photo here</p>
+        )}
         <label className="picker">
           Choose a Photo
           <input
@@ -82,6 +213,7 @@ export function App() {
         </label>
       </div>
       <div className="panel">
+        <PeoplePanel people={people} onOpen={refreshPeople} onChanged={onPeopleChanged} />
         {state.status === "analyzing" && (
           <p className="loading" role="status">
             Analyzing {state.photoName}…
@@ -93,26 +225,49 @@ export function App() {
           </p>
         )}
         {state.status === "opened" && (
-          <OpenedPhotoPanel analysis={state.analysis} filter={filter} onFilterChange={setFilter} />
+          <OpenedPhotoPanel
+            analysis={state.analysis}
+            filter={filter}
+            onFilterChange={setFilter}
+            faces={
+              state.analysis.faces.length > 0 && (
+                <FacesSection
+                  faces={state.analysis.faces}
+                  showBoxes={showBoxes}
+                  onShowBoxesChange={setShowBoxes}
+                  selectedFaceId={selectedFaceId}
+                  people={people}
+                  onName={nameFace}
+                  onNotAFace={markNotAFace}
+                  onClose={() => setSelectedFaceId(undefined)}
+                  suggestionProblem={suggestionProblem}
+                />
+              )
+            }
+          />
         )}
       </div>
     </main>
   );
 }
 
-/** The panel for an opened Photo: Warnings, Summary, the filter box, then its Sections. */
+/** The panel for an opened Photo: Warnings, Faces, Summary, the filter box, then its Sections. */
 function OpenedPhotoPanel({
   analysis,
   filter,
   onFilterChange,
+  faces,
 }: {
   analysis: Analysis;
   filter: string;
   onFilterChange: (filter: string) => void;
+  /** The Faces section, when the Photo has any. */
+  faces: ReactNode;
 }) {
   return (
     <>
       {analysis.warnings.length > 0 && <Warnings warnings={analysis.warnings} />}
+      {faces}
       <SummaryCard summary={analysis.summary} />
       <input
         type="search"
@@ -129,13 +284,41 @@ function OpenedPhotoPanel({
   );
 }
 
-function PhotoPreview({ analysis, previewUrl }: Opened) {
-  const { preview, photo } = analysis;
+function PhotoPreview({
+  analysis,
+  previewUrl,
+  showBoxes,
+  selectedFaceId,
+  onSelectFace,
+  onConfirmSuggestion,
+  onRejectSuggestion,
+}: Opened & {
+  showBoxes: boolean;
+  selectedFaceId: string | undefined;
+  onSelectFace: (faceId: string) => void;
+  onConfirmSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
+  onRejectSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
+}) {
+  const { preview, photo, faces } = analysis;
+  const framed = (src: string) => (
+    <div className="preview-frame">
+      <img src={src} alt={photo.name} />
+      {showBoxes && faces.length > 0 && (
+        <FaceBoxes
+          faces={faces}
+          selectedFaceId={selectedFaceId}
+          onSelect={onSelectFace}
+          onConfirm={onConfirmSuggestion}
+          onReject={onRejectSuggestion}
+        />
+      )}
+    </div>
+  );
   switch (preview.kind) {
     case "client":
-      return <img src={previewUrl} alt={photo.name} />;
+      return framed(previewUrl);
     case "converted":
-      return <img src={`data:${preview.mimeType};base64,${preview.base64}`} alt={photo.name} />;
+      return framed(`data:${preview.mimeType};base64,${preview.base64}`);
     case "none":
       return (
         <p className="no-preview">
