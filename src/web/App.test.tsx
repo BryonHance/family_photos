@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Analysis, PersonSummary } from "../shared/analysis.ts";
@@ -35,6 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("shows a picked Photo beside its Sections and Fields", async () => {
@@ -665,4 +666,92 @@ it("shows the server's message when a Face can no longer be named", async () => 
 
   expect(await screen.findByRole("alert")).toHaveTextContent("This Face is no longer stored. Open the Photo again.");
   expect(faceBox("Face 2")).toBeInTheDocument();
+});
+
+async function openPeoplePanel() {
+  await userEvent.click(screen.getByRole("button", { name: "People" }));
+  return screen.findByRole("region", { name: "People" });
+}
+
+const personRow = (panel: HTMLElement, name: string) =>
+  within(within(panel).getByRole("list", { name: "People" }))
+    .getAllByRole("listitem")
+    .find((row) => within(row).queryByText(name, { selector: ".person-name" }))!;
+
+it("lists People with their Face counts in the People panel, even before a Photo is opened", async () => {
+  fakeFaceServer(crew, crewPeople());
+  render(<App />);
+
+  const panel = await openPeoplePanel();
+
+  expect(await within(panel).findByText("Buzz Aldrin")).toBeInTheDocument();
+  expect(within(personRow(panel, "Buzz Aldrin")).getByText("3 Faces")).toBeInTheDocument();
+  expect(within(personRow(panel, "Michael Collins")).getByText("1 Face")).toBeInTheDocument();
+});
+
+it("renames a Person, renaming their Faces in the opened Photo", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Rename Neil" }));
+  const field = within(panel).getByRole("textbox", { name: "New name for Neil" });
+  await userEvent.clear(field);
+  await userEvent.type(field, "Neil Armstrong{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PATCH", url: "/api/people/neil", body: { name: "Neil Armstrong" } });
+  expect(await screen.findByRole("button", { name: "Face 1: Neil Armstrong" })).toBeInTheDocument();
+  expect(await within(panel).findByText("Neil Armstrong")).toBeInTheDocument();
+});
+
+it("merges one Person into another after a confirmation", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Merge Neil" }));
+  await userEvent.selectOptions(within(panel).getByRole("combobox", { name: "Merge Neil into" }), "Buzz Aldrin");
+  await userEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Merge Neil into Buzz Aldrin?"));
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/people/neil/merge", body: { into: "buzz" } });
+  expect(await screen.findByRole("button", { name: "Face 1: Buzz Aldrin" })).toBeInTheDocument();
+  await waitFor(() => expect(within(personRow(panel, "Buzz Aldrin")).getByText("5 Faces")).toBeInTheDocument());
+  expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument();
+});
+
+it("deletes a Person after a confirmation, leaving their Faces unnamed, and does nothing when it is declined", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+  const deleteNeil = () => userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Delete Neil" }));
+
+  await deleteNeil();
+  expect(server.requests.some((r) => r.method === "DELETE")).toBe(false);
+
+  await deleteNeil();
+  expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining("Delete Neil?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/people/neil", body: undefined });
+  expect(await screen.findByRole("button", { name: "Face 1" })).toBeInTheDocument();
+  await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument());
+});
+
+it('deletes all face data after a confirmation, emptying the People panel', async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(panel).getByRole("button", { name: "Delete all face data" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Delete all face data?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/face-data", body: undefined });
+  expect(await within(panel).findByText("No one has been named yet.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Face 1" })).toBeInTheDocument();
 });
