@@ -3,8 +3,8 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
-import type { FaceDetector } from "./faces/detector.ts";
-import { previewFor } from "./preview.ts";
+import type { FaceDetector, PhotoPixels } from "./faces/detector.ts";
+import { decodeUprightHeic, isHeic, previewFor, type Pixels } from "./preview.ts";
 import {
   DATE_TAKEN,
   DATE_TAKEN_OFFSET,
@@ -166,26 +166,41 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     return fields ? [{ name, fields }] : [];
   });
 
+  // A HEIC is decoded once, for both its preview and its Faces.
+  const uprightHeic = isHeic(photoMimeType)
+    ? await decodeUprightHeic(photo.bytes, {
+        exif: numericValue(tags, "EXIF:IFD0:Orientation"),
+        heifTransform: "QuickTime:Rotation" in tags || "QuickTime:Mirroring" in tags,
+      })
+    : undefined;
+
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: photoMimeType },
-    preview: await previewFor(photoMimeType, photo.bytes, {
-      exif: numericValue(tags, "EXIF:IFD0:Orientation"),
-      heifTransform: "QuickTime:Rotation" in tags || "QuickTime:Mirroring" in tags,
-    }),
+    preview: previewFor(photoMimeType, uprightHeic),
     warnings: deriveWarnings(tags, sections, photo.lastModified),
     summary: summarize(tags),
     sections,
-    faces: await findFaces(config.faceDetector, photoMimeType, photo.bytes),
+    faces: await findFaces(config.faceDetector, photoMimeType, photo.bytes, uprightHeic),
   };
 }
 
 /** Formats sharp decodes, turning them upright by their EXIF Orientation. */
 const SHARP_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-/** TIFF and RAW get no Faces. */
-async function findFaces(detector: FaceDetector, mimeType: string, bytes: Uint8Array): Promise<Face[]> {
-  if (!SHARP_TYPES.has(mimeType)) return [];
-  const faces = await detector.detect({ kind: "encoded", bytes });
+/** JPEG, PNG and WebP go to sharp; a HEIC arrives already decoded. TIFF and RAW get no Faces. */
+async function findFaces(
+  detector: FaceDetector,
+  mimeType: string,
+  bytes: Uint8Array,
+  uprightHeic: Pixels | undefined,
+): Promise<Face[]> {
+  const pixels: PhotoPixels | undefined = uprightHeic
+    ? { kind: "raw", channels: 4, ...uprightHeic }
+    : SHARP_TYPES.has(mimeType)
+      ? { kind: "encoded", bytes }
+      : undefined;
+  if (!pixels) return [];
+  const faces = await detector.detect(pixels);
   return faces.map(({ box }) => ({ box }));
 }
 

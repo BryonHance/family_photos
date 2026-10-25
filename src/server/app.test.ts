@@ -6,14 +6,17 @@ import jpeg from "jpeg-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis, Section } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
+import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
 let exiftool: ExifTool;
 let tempDir: string;
+let faceDetector: FaceDetector;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
+  faceDetector = await loadFaceDetector(join(import.meta.dirname, "../../models"));
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
 });
 
@@ -25,7 +28,7 @@ afterAll(async () => {
 const testUploadLimit = 5_000;
 
 function send(form: FormData, maxUploadBytes = testUploadLimit) {
-  const app = createApp({ exiftool, tempDir, maxUploadBytes });
+  const app = createApp({ exiftool, tempDir, faceDetector, maxUploadBytes });
   return app.request("/api/analyze", { method: "POST", body: form });
 }
 

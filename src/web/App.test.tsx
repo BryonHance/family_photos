@@ -22,6 +22,7 @@ const analysis: Analysis = {
       ],
     },
   ],
+  faces: [],
 };
 
 const photo = new File(["jpeg bytes"], "beach.jpg", { type: "image/jpeg" });

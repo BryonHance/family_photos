@@ -64,4 +64,26 @@ describe("Faces", () => {
   it("boxes each Face in a JPEG, in fractions of the Photo, ordered left to right", async () => {
     expectCrewFaces(await analyze("crew.jpg"));
   });
+
+  it("returns no Faces for a Photo without any", async () => {
+    expect((await analyze("no-faces.jpg")).faces).toEqual([]);
+  });
+
+  it("boxes the Faces of an EXIF-rotated JPEG on the upright Photo", async () => {
+    // crew-rotated.jpg is stored sideways with EXIF Orientation 6.
+    expectCrewFaces(await analyze("crew-rotated.jpg"));
+  });
+
+  it("boxes the Faces of an EXIF-oriented HEIC on the upright Photo", async () => {
+    // crew-oriented.heic is stored sideways with EXIF Orientation 6 and no irot box.
+    const analysis = await analyze("crew-oriented.heic");
+    expect(analysis.photo.mimeType).toBe("image/heic");
+    expectCrewFaces(analysis);
+  });
+
+  it("returns no Faces for a TIFF, even one that shows some", async () => {
+    const analysis = await analyze("crew.tif");
+    expect(analysis.photo.mimeType).toBe("image/tiff");
+    expect(analysis.faces).toEqual([]);
+  });
 });

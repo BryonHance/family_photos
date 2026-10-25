@@ -76,7 +76,10 @@ async function verifyModels(modelsDir: string) {
 }
 
 async function detect(session: ort.InferenceSession, photo: PhotoPixels): Promise<DetectedFace[]> {
-  const { tensor, scaledWidth, scaledHeight } = await letterbox(photo);
+  const letterboxed = await letterbox(photo);
+  // A Photo too damaged to decode has no Faces to find; its Warnings say why.
+  if (!letterboxed) return [];
+  const { tensor, scaledWidth, scaledHeight } = letterboxed;
   const outputs = await session.run({ [session.inputNames[0]!]: tensor });
   // Outputs must be looked up by name in outputNames order: scores for strides
   // 8/16/32, then boxes, then landmarks. The result object's own key order is not that.
@@ -92,19 +95,26 @@ async function detect(session: ort.InferenceSession, photo: PhotoPixels): Promis
 /**
  * Shrinks (or enlarges) the upright Photo to 640 px on its long side and pastes it
  * at the top left of a black 640×640 square, as InsightFace does, normalised to
- * (x − 127.5) / 128 in RGB and laid out NCHW.
+ * (x − 127.5) / 128 in RGB and laid out NCHW. Undefined when the Photo cannot
+ * be decoded at all; a Photo that is only partly damaged is decoded as far as it goes.
  */
 async function letterbox(photo: PhotoPixels) {
   const image =
     photo.kind === "encoded"
-      ? sharp(photo.bytes).autoOrient()
+      ? sharp(photo.bytes, { failOn: "none" }).autoOrient()
       : sharp(photo.data, { raw: { width: photo.width, height: photo.height, channels: photo.channels } });
-  const { data, info } = await image
-    .resize(INPUT_SIZE, INPUT_SIZE, { fit: "inside" })
-    .toColourspace("srgb")
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+  let decoded;
+  try {
+    decoded = await image
+      .resize(INPUT_SIZE, INPUT_SIZE, { fit: "inside" })
+      .toColourspace("srgb")
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+  } catch {
+    return undefined;
+  }
+  const { data, info } = decoded;
 
   const plane = INPUT_SIZE * INPUT_SIZE;
   const input = new Float32Array(3 * plane).fill((0 - 127.5) / 128);
