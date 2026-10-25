@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the test fixtures. Every fixture is generated here, never a real
 # family Photo, because the repo is public (ADR-0001). Needs ImageMagick and
-# heif-enc (libheif).
+# heif-enc (libheif), and curl for the public-domain crew portrait.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 exiftool="$(ls node_modules/.pnpm/exiftool-vendored.pl@*/node_modules/exiftool-vendored.pl/bin/exiftool | head -1)"
