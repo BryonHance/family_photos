@@ -32,7 +32,25 @@ afterEach(async () => {
 const strangerLabels = (faces: { stranger?: { label: string; photoCount: number } }[]) =>
   faces.map((face) => face.stranger && `${face.stranger.label}, in ${face.stranger.photoCount} Photos`);
 
-const suggestedNames =(faces: { suggestion?: { name: string } }[]) => faces.map((face) => face.suggestion?.name);
+const suggestedNames = (faces: { suggestion?: { name: string } }[]) => faces.map((face) => face.suggestion?.name);
+
+/**
+ * The real models finding a Photo's Faces, standing in an embedding for each,
+ * left to right: `vectors[i]` maps axes to weights, made unit length. A Face
+ * without one gets an axis of its own, unlike any other.
+ */
+const facesWith = (...vectors: Record<number, number>[]): FaceDetector => ({
+  modelVersion: faceDetector.modelVersion,
+  detect: async (photo) => {
+    const faces = (await faceDetector.detect(photo)).sort((a, b) => a.box.x - b.box.x);
+    return faces.map((face, i) => {
+      const embedding = new Float32Array(512);
+      for (const [axis, weight] of Object.entries(vectors[i] ?? { [100 + i]: 1 })) embedding[Number(axis)] = weight;
+      const length = Math.hypot(...embedding);
+      return { ...face, embedding: embedding.map((v) => v / length) };
+    });
+  },
+});
 
 describe("Suggestions", () => {
   it("suggests the Person of a named Face for the same Face in another Photo", async () => {
@@ -84,6 +102,24 @@ describe("Suggestions", () => {
     // The left-hand Face is the crop as it was; the right-hand one is mirrored.
     expect(twice).toHaveLength(2);
     expect(suggestedNames(twice)).toEqual(["Neil", undefined]);
+  });
+
+  it("leaves the Face that loses a clash without a Suggestion, rather than its next-best Person", async () => {
+    // Neil is axis 0 and Buzz axis 1. Both Faces of the second Photo are nearest to Neil,
+    // the right-hand one less so; it is like Buzz too, but less than like Neil.
+    const crew = (await api.upload("crew.jpg", { detector: facesWith({ 0: 1 }, { 1: 1 }, { 2: 1 }) })).faces;
+    const neil = await api.nameFace(crew[0]!.id, "Neil");
+    await api.nameFace(crew[1]!.id, "Buzz");
+
+    const twice = (
+      await api.upload("armstrong-twice.jpg", {
+        detector: facesWith({ 0: 0.8, 1: 0.55, 3: Math.sqrt(0.0575) }, { 0: 0.7, 1: 0.6, 4: Math.sqrt(0.15) }),
+      })
+    ).faces;
+
+    expect(twice.map((face) => face.suggestion)).toEqual([neil, undefined]);
+    // It then follows the Stranger rule: alone in a new Stranger, it shows no label.
+    expect(twice[1]!.stranger).toBeUndefined();
   });
 
   it("does not suggest a Person already named in the same Photo", async () => {

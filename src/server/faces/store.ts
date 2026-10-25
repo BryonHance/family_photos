@@ -237,7 +237,8 @@ export function openFaceStore(path: string) {
    * Face of its Stranger however alike they are; unless the user rejected that
    * Person for it. A Person already named in this Photo is not
    * suggested, and no two Faces of one Photo are suggested as the same Person:
-   * the closest pairs are matched first.
+   * the better match wins, and the other Face gets no Suggestion at all (it then
+   * follows the Stranger rule), never its next-best Person.
    */
   function suggestionsFor(sha256: string): Map<string, PersonRef> {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
@@ -258,6 +259,7 @@ export function openFaceStore(path: string) {
       (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => `${r.face_id} ${r.person_id}`),
     );
 
+    // Each Face's own best Person first; only then are clashes settled.
     const pairs: { faceId: string; person: PersonRef; score: number }[] = [];
     for (const face of unnamed) {
       const embedding = embeddingOf(face.embedding);
@@ -273,13 +275,14 @@ export function openFaceStore(path: string) {
           sameStranger: sameStranger || (known?.sameStranger ?? false),
         });
       }
-      for (const { person, score, sameStranger } of best.values()) {
-        if (sameStranger || score >= SUGGESTION_THRESHOLD) pairs.push({ faceId: face.id, person, score });
-      }
+      const qualifying = [...best.values()].filter((b) => b.sameStranger || b.score >= SUGGESTION_THRESHOLD);
+      const nearest = qualifying.sort((a, b) => b.score - a.score)[0];
+      if (nearest) pairs.push({ faceId: face.id, person: nearest.person, score: nearest.score });
     }
+    // Two Faces wanting the same Person: the better match wins, and the other gets no Suggestion.
     const suggested = new Set<string>();
     for (const { faceId, person } of pairs.sort((a, b) => b.score - a.score)) {
-      if (suggestions.has(faceId) || suggested.has(person.id)) continue;
+      if (suggested.has(person.id)) continue;
       suggestions.set(faceId, person);
       suggested.add(person.id);
     }
