@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { Box, PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
  * faces.db holds face data and nothing else (ADR-0002): per Face, its box, the
@@ -36,7 +37,7 @@ const SCHEMA = `
 `;
 
 /** A Face as the store returns it: what the Analysis shows. */
-export type StoredFace = { id: string; box: Box; person?: PersonRef };
+export type StoredFace = Face;
 
 /** A Face as the detector found it, before it is stored. */
 export type NewFace = { box: Box; embedding: Float32Array };
@@ -60,6 +61,9 @@ type FaceRow = {
   person_name: string | null;
   not_a_face: number;
 };
+
+type EmbeddingRow = { id: string; embedding: Uint8Array; model_version: string | null; person_id: string | null };
+type NamedRow = { photo_sha256: string; embedding: Uint8Array; person_id: string; person_name: string };
 
 /** Opens (or creates) faces.db at `path`; `":memory:"` keeps it in memory. */
 export function openFaceStore(path: string) {
@@ -95,10 +99,61 @@ export function openFaceStore(path: string) {
     GROUP BY people.id
     ORDER BY people.name`);
 
+  // Every named Face's embedding, for Suggestions: a plain scan, no vector index (spec #12).
+  const namedFaces = db.prepare(`
+    SELECT photo_sha256, embedding, person_id, people.name AS person_name
+    FROM faces JOIN people ON people.id = faces.person_id
+    WHERE model_version = ?`);
+  const embeddingsOfPhoto = db.prepare(
+    "SELECT id, embedding, model_version, person_id FROM faces WHERE photo_sha256 = ? AND embedding IS NOT NULL",
+  );
+
   const rowsOf = (sha256: string) => facesOfPhotoQuery.all(sha256) as FaceRow[];
   // Faces marked "Not a face" carry no model version, so they never make a Photo stale.
   const isCurrent = (rows: FaceRow[], modelVersion: string) =>
     rows.length > 0 && rows.every((r) => r.model_version === null || r.model_version === modelVersion);
+
+  /** The Faces of a stored Photo as the Analysis shows them. */
+  const present = (sha256: string) => visible(rowsOf(sha256), suggestionsFor(sha256));
+
+  /**
+   * Each unnamed Face's Suggestion: the Person of its nearest named Face in
+   * another Photo, at or above SUGGESTION_THRESHOLD. A Person already named in
+   * this Photo is not suggested, and no two Faces of one Photo are suggested as
+   * the same Person: the closest pairs are matched first.
+   */
+  function suggestionsFor(sha256: string): Map<string, PersonRef> {
+    const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
+    const modelVersion = own[0]?.model_version;
+    const unnamed = own.filter((face) => face.person_id === null);
+    const suggestions = new Map<string, PersonRef>();
+    if (modelVersion == null || unnamed.length === 0) return suggestions;
+    const namedHere = new Set(own.map((face) => face.person_id));
+    const named = (namedFaces.all(modelVersion) as NamedRow[])
+      .filter((row) => row.photo_sha256 !== sha256 && !namedHere.has(row.person_id))
+      .map((row) => ({ person: { id: row.person_id, name: row.person_name }, embedding: embeddingOf(row.embedding) }));
+
+    const pairs: { faceId: string; person: PersonRef; score: number }[] = [];
+    for (const face of unnamed) {
+      const embedding = embeddingOf(face.embedding);
+      const best = new Map<string, { person: PersonRef; score: number }>();
+      for (const candidate of named) {
+        const score = cosine(embedding, candidate.embedding);
+        const known = best.get(candidate.person.id);
+        if (!known || score > known.score) best.set(candidate.person.id, { person: candidate.person, score });
+      }
+      for (const { person, score } of best.values()) {
+        if (score >= SUGGESTION_THRESHOLD) pairs.push({ faceId: face.id, person, score });
+      }
+    }
+    const suggested = new Set<string>();
+    for (const { faceId, person } of pairs.sort((a, b) => b.score - a.score)) {
+      if (suggestions.has(faceId) || suggested.has(person.id)) continue;
+      suggestions.set(faceId, person);
+      suggested.add(person.id);
+    }
+    return suggestions;
+  }
 
   function transaction<T>(work: () => T): T {
     db.exec("BEGIN IMMEDIATE");
@@ -122,12 +177,12 @@ export function openFaceStore(path: string) {
      */
     async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<StoredFace[]> {
       const stored = rowsOf(photo.sha256);
-      if (isCurrent(stored, photo.modelVersion)) return visible(stored);
+      if (isCurrent(stored, photo.modelVersion)) return present(photo.sha256);
       const detected = await detect();
       return transaction(() => {
         const old = rowsOf(photo.sha256);
         // Another request for the same Photo may have stored it while this one was detecting.
-        if (isCurrent(old, photo.modelVersion)) return visible(old);
+        if (isCurrent(old, photo.modelVersion)) return present(photo.sha256);
         const heirs = inheritMarks(old, detected);
         deleteFacesOfPhoto.run(photo.sha256);
         detected.forEach((face, i) => {
@@ -146,7 +201,7 @@ export function openFaceStore(path: string) {
             notAFace ? 1 : 0,
           );
         });
-        return visible(rowsOf(photo.sha256));
+        return present(photo.sha256);
       });
     },
 
@@ -223,14 +278,25 @@ export function openFaceStore(path: string) {
   }
 }
 
-function visible(rows: FaceRow[]): StoredFace[] {
+function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFace[] {
   return rows
     .filter((r) => r.not_a_face === 0)
     .map((r) => {
       const face: StoredFace = { id: r.id, box: boxOf(r) };
+      const suggestion = suggestions.get(r.id);
       if (r.person_id !== null && r.person_name !== null) face.person = { id: r.person_id, name: r.person_name };
+      else if (suggestion) face.suggestion = suggestion;
       return face;
     });
+}
+
+/** The embedding a BLOB holds: 512 float32s, copied so that its alignment does not matter. */
+const embeddingOf = (blob: Uint8Array) => new Float32Array(new Uint8Array(blob).buffer);
+
+function cosine(a: Float32Array, b: Float32Array): number {
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) dot += a[i]! * b[i]!;
+  return dot; // Both are L2-normalised.
 }
 
 const boxOf = (r: FaceRow): Box => ({ x: r.box_x, y: r.box_y, width: r.box_width, height: r.box_height });

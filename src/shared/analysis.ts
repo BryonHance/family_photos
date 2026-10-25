@@ -39,13 +39,26 @@ export type Box = { x: number; y: number; width: number; height: number };
 /** A Person as a Face refers to them. */
 export type PersonRef = { id: string; name: string };
 
-/** A Face found in the Photo, stored so that it can be named (ADR-0002). */
+/**
+ * A Face found in the Photo, stored so that it can be named (ADR-0002). It has
+ * at most one of `person`, `suggestion` and `stranger`.
+ */
 export type Face = {
   id: string;
   box: Box;
   /** Present once the Face is named. */
   person?: PersonRef;
+  /** Who the viewer thinks the Face shows, waiting to be confirmed or rejected. Never beside `person`. */
+  suggestion?: PersonRef;
+  /**
+   * The Stranger an unnamed Face without a Suggestion belongs to, once that
+   * Stranger spans at least 2 Photos: "Unknown 4", in `photoCount` Photos.
+   */
+  stranger?: StrangerRef;
 };
+
+/** A Stranger as a Face refers to them. */
+export type StrangerRef = { label: string; photoCount: number };
 
 /** A Person as the People panel lists them. */
 export type PersonSummary = PersonRef & { faceCount: number };
