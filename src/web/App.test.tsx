@@ -548,6 +548,15 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = []) {
       return Response.json({ id: person.id, name: person.name });
     }
     if (route(/^\/api\/faces\/(.+)\/not-a-face$/, "POST")) return new Response(null, { status: 204 });
+    if ((match = route(/^\/api\/faces\/(.+)\/suggestion\/confirm$/, "POST"))) {
+      const person = people.find((p) => p.id === body!["personId"])!;
+      person.faceCount++;
+      return Response.json({ id: person.id, name: person.name });
+    }
+    if ((match = route(/^\/api\/faces\/(.+)\/suggestion\/reject$/, "POST"))) {
+      const { suggestion: _rejected, ...face } = opened.faces.find((f) => f.id === match![1])!;
+      return Response.json(face);
+    }
     if ((match = route(/^\/api\/people\/([^/]+)$/, "PATCH"))) {
       people = people.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
       return Response.json({ id: match[1], name: body!["name"] });
@@ -754,4 +763,63 @@ it('deletes all face data after a confirmation, emptying the People panel', asyn
   expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/face-data", body: undefined });
   expect(await within(panel).findByText("No one has been named yet.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Face 1" })).toBeInTheDocument();
+});
+
+/** The crew with Face 2 suggested as Michael Collins and Face 3 in a Stranger. */
+const crewWithSuggestion: Analysis = {
+  ...crew,
+  faces: [
+    crew.faces[0]!,
+    { ...crew.faces[1]!, suggestion: { id: "mike", name: "Michael Collins" } },
+    { ...crew.faces[2]!, stranger: { label: "Unknown 4", photoCount: 7 } },
+  ],
+};
+
+it("shows a Suggestion on its Face's box, and ✓ names the Face", async () => {
+  const server = fakeFaceServer(crewWithSuggestion, crewPeople());
+  await openCrew();
+  expect(faceBox("Face 2: Michael Collins? (suggested)")).toHaveTextContent("Michael Collins?");
+
+  await userEvent.click(screen.getByRole("button", { name: "✓ Face 2 is Michael Collins" }));
+
+  expect(server.requests).toContainEqual({
+    method: "POST",
+    url: "/api/faces/face-b/suggestion/confirm",
+    body: { personId: "mike" },
+  });
+  expect(await screen.findByRole("button", { name: "Face 2: Michael Collins" })).toHaveTextContent("Michael Collins");
+  expect(screen.queryByRole("button", { name: /✓/ })).not.toBeInTheDocument();
+});
+
+it("✕ rejects a Suggestion, leaving the Face unnamed", async () => {
+  const server = fakeFaceServer(crewWithSuggestion, crewPeople());
+  await openCrew();
+
+  await userEvent.click(screen.getByRole("button", { name: "✕ Face 2 is not Michael Collins" }));
+
+  expect(server.requests).toContainEqual({
+    method: "POST",
+    url: "/api/faces/face-b/suggestion/reject",
+    body: { personId: "mike" },
+  });
+  expect(await screen.findByRole("button", { name: "Face 2" })).not.toHaveTextContent("Michael Collins");
+  expect(screen.queryByRole("button", { name: /✕/ })).not.toBeInTheDocument();
+});
+
+it("labels a Face in a Stranger with the Stranger and how many Photos it spans", async () => {
+  fakeFaceServer(crewWithSuggestion, crewPeople());
+  await openCrew();
+
+  expect(faceBox("Face 3: Unknown 4, in 7 Photos")).toHaveTextContent("Unknown 4, in 7 Photos");
+});
+
+it("naming a Face drops the same Suggestion from the Photo's other Faces", async () => {
+  fakeFaceServer(crewWithSuggestion, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 3: Unknown 4, in 7 Photos"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Michael Collins{Enter}");
+
+  expect(await screen.findByRole("button", { name: "Face 3: Michael Collins" })).toBeInTheDocument();
+  expect(faceBox("Face 2")).not.toHaveTextContent("Michael Collins");
 });

@@ -1,29 +1,45 @@
 import { useId, useState } from "react";
-import type { Face, PersonSummary } from "../shared/analysis.ts";
+import type { Face, PersonRef, PersonSummary } from "../shared/analysis.ts";
 
-/** "Face 2" or "Face 1: Neil": how a Face is named on its box and in its form. */
-export const faceLabel = (face: Face, index: number) =>
-  face.person ? `Face ${index + 1}: ${face.person.name}` : `Face ${index + 1}`;
+/** What a Face's box says about who it shows: their name, a Suggestion, or a Stranger. */
+function whoLabel(face: Face): string | undefined {
+  if (face.person) return face.person.name;
+  if (face.suggestion) return `${face.suggestion.name}?`;
+  if (face.stranger) return `${face.stranger.label}, in ${face.stranger.photoCount} Photos`;
+  return undefined;
+}
+
+/** "Face 2", "Face 1: Neil", "Face 3: Neil? (suggested)" or "Face 4: Unknown 2, in 3 Photos". */
+export function faceLabel(face: Face, index: number): string {
+  const who = whoLabel(face);
+  if (who === undefined) return `Face ${index + 1}`;
+  return `Face ${index + 1}: ${who}${face.suggestion ? " (suggested)" : ""}`;
+}
 
 /**
  * A numbered box over each Face, placed by its fractions of the upright Photo,
- * which the preview shows. Clicking a box selects its Face for naming.
+ * which the preview shows. Clicking a box selects its Face for naming. A box
+ * with a Suggestion carries ✓ and ✕ to confirm or reject it in one click.
  */
 export function FaceBoxes({
   faces,
   selectedFaceId,
   onSelect,
+  onConfirm,
+  onReject,
 }: {
   faces: Face[];
   selectedFaceId: string | undefined;
   onSelect: (faceId: string) => void;
+  onConfirm: (faceId: string, person: PersonRef) => Promise<void>;
+  onReject: (faceId: string, person: PersonRef) => Promise<void>;
 }) {
   return (
     <ol className="face-boxes" aria-label="Face boxes">
       {faces.map((face, i) => (
         <li
           key={face.id}
-          className="face-box"
+          className={face.suggestion ? "face-box suggested" : face.stranger ? "face-box stranger" : "face-box"}
           style={{
             left: `${face.box.x * 100}%`,
             top: `${face.box.y * 100}%`,
@@ -38,11 +54,64 @@ export function FaceBoxes({
             onClick={() => onSelect(face.id)}
           >
             <span className="face-number">{i + 1}</span>
-            {face.person && <span className="face-name">{face.person.name}</span>}
+            {whoLabel(face) !== undefined && <span className="face-name">{whoLabel(face)}</span>}
           </button>
+          {face.suggestion && (
+            <SuggestionButtons
+              number={i + 1}
+              person={face.suggestion}
+              onConfirm={() => onConfirm(face.id, face.suggestion!)}
+              onReject={() => onReject(face.id, face.suggestion!)}
+            />
+          )}
         </li>
       ))}
     </ol>
+  );
+}
+
+/** ✓ and ✕ for a Suggestion. */
+function SuggestionButtons({
+  number,
+  person,
+  onConfirm,
+  onReject,
+}: {
+  number: number;
+  person: PersonRef;
+  onConfirm: () => Promise<void>;
+  onReject: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await action();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="suggestion-actions">
+      <button
+        type="button"
+        aria-label={`✓ Face ${number} is ${person.name}`}
+        title={`Yes, this is ${person.name}`}
+        disabled={busy}
+        onClick={() => void run(onConfirm)}
+      >
+        ✓
+      </button>
+      <button
+        type="button"
+        aria-label={`✕ Face ${number} is not ${person.name}`}
+        title={`No, this is not ${person.name}`}
+        disabled={busy}
+        onClick={() => void run(onReject)}
+      >
+        ✕
+      </button>
+    </span>
   );
 }
 
@@ -56,6 +125,7 @@ export function FacesSection({
   onName,
   onNotAFace,
   onClose,
+  suggestionProblem,
 }: {
   faces: Face[];
   showBoxes: boolean;
@@ -65,6 +135,8 @@ export function FacesSection({
   onName: (faceId: string, name: string) => Promise<void>;
   onNotAFace: (faceId: string) => Promise<void>;
   onClose: () => void;
+  /** Why the last ✓ or ✕ failed, if it did. */
+  suggestionProblem?: string | undefined;
 }) {
   const headingId = useId();
   const index = faces.findIndex((face) => face.id === selectedFaceId);
@@ -76,6 +148,11 @@ export function FacesSection({
         <input type="checkbox" checked={showBoxes} onChange={(event) => onShowBoxesChange(event.target.checked)} />
         Show boxes
       </label>
+      {suggestionProblem && (
+        <p className="error" role="alert">
+          {suggestionProblem}
+        </p>
+      )}
       {selected ? (
         <FaceForm
           // A fresh form for each Face, starting from its own name.

@@ -60,11 +60,48 @@ export function App() {
     void refreshPeople();
   }
 
+  // Why the last ✓ or ✕ failed, if it did.
+  const [suggestionProblem, setSuggestionProblem] = useState<string>();
+
+  /** Shows a Face as named, and no other Face of the Photo as suggested to be the same Person. */
+  function showNamed(faceId: string, person: PersonRef) {
+    updateFaces((faces) =>
+      faces.map((face) =>
+        face.id === faceId
+          ? { id: face.id, box: face.box, person }
+          : face.suggestion?.id === person.id
+            ? { id: face.id, box: face.box }
+            : face,
+      ),
+    );
+  }
+
   async function nameFace(faceId: string, name: string) {
     const person = await faceApi.nameFace(faceId, name);
-    updateFaces((faces) => faces.map((face) => (face.id === faceId ? { ...face, person } : face)));
+    showNamed(faceId, person);
     setSelectedFaceId(undefined);
     await refreshPeople();
+  }
+
+  async function confirmSuggestion(faceId: string, suggested: PersonRef) {
+    setSuggestionProblem(undefined);
+    try {
+      showNamed(faceId, await faceApi.confirmSuggestion(faceId, suggested.id));
+    } catch (failure) {
+      setSuggestionProblem(failure instanceof Error ? failure.message : String(failure));
+      return;
+    }
+    await refreshPeople();
+  }
+
+  async function rejectSuggestion(faceId: string, suggested: PersonRef) {
+    setSuggestionProblem(undefined);
+    try {
+      const updated = await faceApi.rejectSuggestion(faceId, suggested.id);
+      updateFaces((faces) => faces.map((face) => (face.id === faceId ? updated : face)));
+    } catch (failure) {
+      setSuggestionProblem(failure instanceof Error ? failure.message : String(failure));
+    }
   }
 
   async function markNotAFace(faceId: string) {
@@ -90,9 +127,14 @@ export function App() {
       }
     };
     updateFaces((faces) =>
-      faces.map(({ person, ...face }) => {
-        const next = renamed(person);
-        return next ? { ...face, person: next } : face;
+      faces.map(({ person, suggestion, ...face }) => {
+        const nextPerson = renamed(person);
+        const nextSuggestion = renamed(suggestion);
+        return {
+          ...face,
+          ...(nextPerson && { person: nextPerson }),
+          ...(nextSuggestion && { suggestion: nextSuggestion }),
+        };
       }),
     );
     void refreshPeople();
@@ -103,6 +145,7 @@ export function App() {
     const controller = new AbortController();
     request.current = controller;
     setSelectedFaceId(undefined);
+    setSuggestionProblem(undefined);
     setState({ status: "analyzing", photoName: photo.name });
     let next: ViewerState;
     try {
@@ -143,7 +186,14 @@ export function App() {
     >
       <div className="photo">
         {state.status === "opened" ? (
-          <PhotoPreview {...state} showBoxes={showBoxes} selectedFaceId={selectedFaceId} onSelectFace={selectFace} />
+          <PhotoPreview
+            {...state}
+            showBoxes={showBoxes}
+            selectedFaceId={selectedFaceId}
+            onSelectFace={selectFace}
+            onConfirmSuggestion={confirmSuggestion}
+            onRejectSuggestion={rejectSuggestion}
+          />
         ) : (
           <p className="hint">Drop a Photo here</p>
         )}
@@ -189,6 +239,7 @@ export function App() {
                   onName={nameFace}
                   onNotAFace={markNotAFace}
                   onClose={() => setSelectedFaceId(undefined)}
+                  suggestionProblem={suggestionProblem}
                 />
               )
             }
@@ -238,13 +289,27 @@ function PhotoPreview({
   showBoxes,
   selectedFaceId,
   onSelectFace,
-}: Opened & { showBoxes: boolean; selectedFaceId: string | undefined; onSelectFace: (faceId: string) => void }) {
+  onConfirmSuggestion,
+  onRejectSuggestion,
+}: Opened & {
+  showBoxes: boolean;
+  selectedFaceId: string | undefined;
+  onSelectFace: (faceId: string) => void;
+  onConfirmSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
+  onRejectSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
+}) {
   const { preview, photo, faces } = analysis;
   const framed = (src: string) => (
     <div className="preview-frame">
       <img src={src} alt={photo.name} />
       {showBoxes && faces.length > 0 && (
-        <FaceBoxes faces={faces} selectedFaceId={selectedFaceId} onSelect={onSelectFace} />
+        <FaceBoxes
+          faces={faces}
+          selectedFaceId={selectedFaceId}
+          onSelect={onSelectFace}
+          onConfirm={onConfirmSuggestion}
+          onReject={onRejectSuggestion}
+        />
       )}
     </div>
   );
