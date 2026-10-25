@@ -33,12 +33,20 @@ export type Summary = {
   location?: { latitude: number; longitude: number };
 };
 
+/** A rectangle in fractions of the upright Photo's width and height, from its top left. */
+export type Box = { x: number; y: number; width: number; height: number };
+
+/** A Face found in the Photo. */
+export type Face = { box: Box };
+
 export type Analysis = {
   photo: { name: string; sizeBytes: number; mimeType: string };
   preview: Preview;
   warnings: Warning[];
   summary: Summary;
   sections: Section[];
+  /** Ordered left to right. Empty when there are none, and for TIFF and RAW. */
+  faces: Face[];
 };
 
 export type AnalyzeErrorKind = "no-photo" | "too-large" | "unsupported-file";

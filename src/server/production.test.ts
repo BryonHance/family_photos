@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
+import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import { createProductionApp } from "./production.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
@@ -11,9 +12,11 @@ const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", na
 let exiftool: ExifTool;
 let tempDir: string;
 let uiDir: string;
+let faceDetector: FaceDetector;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
+  faceDetector = await loadFaceDetector(join(import.meta.dirname, "../../models"));
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
   // Stands in for the built UI (`dist/web`), so the test does not depend on a build.
   uiDir = await mkdtemp(join(tmpdir(), "family-photos-ui-"));
@@ -28,7 +31,7 @@ afterAll(async () => {
   await rm(uiDir, { recursive: true, force: true });
 });
 
-const app = () => createProductionApp({ exiftool, tempDir, maxUploadBytes: 1024 * 1024, uiDir });
+const app = () => createProductionApp({ exiftool, tempDir, faceDetector, maxUploadBytes: 1024 * 1024, uiDir });
 
 describe("production server", () => {
   it("serves the UI at the root", async () => {

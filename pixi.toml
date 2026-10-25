@@ -11,6 +11,7 @@ dev = { cmd = "pnpm run dev", depends-on = ["install"] }
 test = { cmd = "pnpm run test", depends-on = ["install"] }
 typecheck = { cmd = "pnpm run typecheck", depends-on = ["install"] }
 build = { cmd = "pnpm run build", depends-on = ["install"] }
+models = "bash scripts/fetch-models.sh"
 
 [dependencies]
 pnpm = ">=12.4.1,<13"
