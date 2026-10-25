@@ -68,7 +68,10 @@ export type PhotoKey = { sha256: string; modelVersion: string };
 
 export type FaceStore = ReturnType<typeof openFaceStore>;
 
-/** A detected Face whose box overlaps an old one by at least this IoU inherits its Person or "Not a face" mark. */
+/**
+ * A detected Face whose box overlaps an old one by at least this IoU inherits
+ * its Person or "Not a face" mark, and its rejected Suggestions.
+ */
 const INHERIT_IOU = 0.5;
 
 type FaceRow = {
@@ -313,8 +316,8 @@ export function openFaceStore(path: string) {
      * The Faces of a Photo, left to right, without those marked "Not a face".
      * A Photo stored under the same model version returns its stored Faces and
      * `detect` is not called. Otherwise `detect` runs and its Faces replace any
-     * stored ones, each inheriting the Person or "Not a face" mark of an old
-     * Face whose box it mostly overlaps.
+     * stored ones, each inheriting the Person or "Not a face" mark, and the
+     * rejected Suggestions, of an old Face whose box it mostly overlaps.
      */
     async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<StoredFace[]> {
       if (isCurrent(photo)) return transaction(() => present(photo.sha256));
@@ -324,12 +327,14 @@ export function openFaceStore(path: string) {
         if (isCurrent(photo)) return present(photo.sha256);
         const old = rowsOf(photo.sha256);
         const heirs = inheritMarks(old, detected);
+        const rejections = rejectionsOfPhoto.all(photo.sha256) as { face_id: string; person_id: string }[];
         deleteFacesOfPhoto.run(photo.sha256);
         detected.forEach((face, i) => {
           const from = heirs[i];
           const notAFace = from?.not_a_face === 1;
+          const id = randomUUID();
           insertFace.run(
-            randomUUID(),
+            id,
             photo.sha256,
             face.box.x,
             face.box.y,
@@ -340,6 +345,9 @@ export function openFaceStore(path: string) {
             notAFace ? null : (from?.person_id ?? null),
             notAFace ? 1 : 0,
           );
+          if (from && !notAFace) {
+            for (const r of rejections) if (r.face_id === from.id) rejectSuggestion.run(id, r.person_id);
+          }
         });
         // A Photo without Faces keeps nothing, not even its hash, so it is detected on every open.
         if (detected.length > 0) setModelVersionOfPhoto.run(photo.sha256, photo.modelVersion);

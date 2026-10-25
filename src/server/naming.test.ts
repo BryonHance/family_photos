@@ -198,6 +198,18 @@ describe("a Photo stored under an older model version", () => {
     expect(await api.upload("crew.jpg")).toMatchObject({ faces: reopened });
   });
 
+  it("carries a rejected Suggestion over to the new Face that mostly overlaps the old one", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    const [old] = (await api.upload("crew-rotated.jpg", { detector: olderModel(0.15) })).faces;
+    await api.rejectSuggestion(old!.id, neil.id);
+
+    const [reopened] = (await api.upload("crew-rotated.jpg")).faces;
+
+    expect(reopened!.id).not.toBe(old!.id);
+    expect(reopened!.suggestion).toBeUndefined();
+  });
+
   it('is detected again even when every Face was marked "Not a face"', async () => {
     const old = (await api.upload("crew.jpg", { detector: olderModel(0.8) })).faces;
     for (const face of old) await api.markNotAFace(face.id);
