@@ -72,6 +72,29 @@ describe("Suggestions", () => {
     expect(reopened!.person).toBeUndefined();
   });
 
+  it("never suggests two Faces of one Photo as the same Person: the better match wins", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    await api.nameFace(armstrong!.id, "Neil");
+
+    const twice = (await api.upload("armstrong-twice.jpg")).faces;
+
+    // The left-hand Face is the crop as it was; the right-hand one is mirrored.
+    expect(twice).toHaveLength(2);
+    expect(suggestedNames(twice)).toEqual(["Neil", undefined]);
+  });
+
+  it("does not suggest a Person already named in the same Photo", async () => {
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    await api.nameFace(armstrong!.id, "Neil");
+    const [left, right] = (await api.upload("armstrong-twice.jpg")).faces;
+
+    await api.nameFace(left!.id, "Neil");
+
+    const [, reopenedRight] = (await api.upload("armstrong-twice.jpg")).faces;
+    expect(reopenedRight!.id).toBe(right!.id);
+    expect(reopenedRight!.suggestion).toBeUndefined();
+  });
+
   it("refuses to confirm or reject for an unknown Face or Person", async () => {
     const [armstrong] = (await api.upload("crew.jpg")).faces;
     const neil = await api.nameFace(armstrong!.id, "Neil");
