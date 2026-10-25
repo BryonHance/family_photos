@@ -24,3 +24,6 @@ dist/
 *.[rR][aA][fF]
 *.[aA][vV][iI][fF]
 !fixtures/**
+
+# Face models, fetched by `pixi run models` (non-commercial licence; never committed)
+models/

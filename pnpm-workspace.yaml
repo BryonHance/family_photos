@@ -1,2 +1,6 @@
 allowBuilds:
   esbuild: true
+  # The CPU binaries ship in the package; its postinstall only downloads CUDA libraries.
+  onnxruntime-node: false
+  # sharp's prebuilt @img/sharp-* packages are used; its install script only builds from source.
+  sharp: false
