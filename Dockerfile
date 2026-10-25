@@ -32,7 +32,10 @@ RUN apt-get update \
   && apt-get install --yes --no-install-recommends perl \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 UI_DIR=/app/dist/web MODELS_DIR=/app/models
+ENV NODE_ENV=production PORT=3000 UI_DIR=/app/dist/web MODELS_DIR=/app/models FACES_DB=/app/data/faces.db
+# faces.db lives in the named volume docker-compose.yml mounts here. The
+# directory is created owned by node so that a new, empty volume is writable.
+RUN mkdir /app/data && chown node:node /app/data
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=models /models ./models
 COPY package.json ./

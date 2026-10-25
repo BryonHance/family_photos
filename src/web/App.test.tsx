@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Analysis } from "../shared/analysis.ts";
+import type { Analysis, PersonSummary } from "../shared/analysis.ts";
 import { App } from "./App.tsx";
 
 const analysis: Analysis = {
@@ -35,6 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("shows a picked Photo beside its Sections and Fields", async () => {
@@ -469,8 +470,8 @@ it("shows a placeholder instead of a preview when a Photo has no preview", async
 const withFaces: Analysis = {
   ...analysis,
   faces: [
-    { box: { x: 0.1, y: 0.2, width: 0.15, height: 0.25 } },
-    { box: { x: 0.6, y: 0.3, width: 0.1, height: 0.2 } },
+    { id: "face-1", box: { x: 0.1, y: 0.2, width: 0.15, height: 0.25 } },
+    { id: "face-2", box: { x: 0.6, y: 0.3, width: 0.1, height: 0.2 } },
   ],
 };
 
@@ -522,4 +523,235 @@ it("shows no Faces heading, toggle or boxes when a Photo has no Faces", async ()
   expect(screen.queryByRole("region", { name: /faces/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox", { name: "Show boxes" })).not.toBeInTheDocument();
   expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
+});
+
+/**
+ * Stands in for the server's face routes, keeping People in memory, and records
+ * every request so tests can check what the viewer sent.
+ */
+function fakeFaceServer(opened: Analysis, people: PersonSummary[] = []) {
+  const requests: { method: string; url: string; body?: unknown }[] = [];
+  let nextId = 1;
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, string>) : undefined;
+    requests.push({ method, url, body });
+    const route = (pattern: RegExp, verb: string) => (method === verb ? url.match(pattern) : null);
+    let match;
+    if (url === "/api/analyze") return Response.json(opened);
+    if (route(/^\/api\/people$/, "GET")) return Response.json({ people });
+    if ((match = route(/^\/api\/faces\/(.+)\/person$/, "PUT"))) {
+      let person = people.find((p) => p.name.toLowerCase() === body!["name"]!.toLowerCase());
+      if (!person) people = [...people, (person = { id: `person-${nextId++}`, name: body!["name"]!, faceCount: 0 })];
+      person.faceCount++;
+      return Response.json({ id: person.id, name: person.name });
+    }
+    if (route(/^\/api\/faces\/(.+)\/not-a-face$/, "POST")) return new Response(null, { status: 204 });
+    if ((match = route(/^\/api\/people\/([^/]+)$/, "PATCH"))) {
+      people = people.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      return Response.json({ id: match[1], name: body!["name"] });
+    }
+    if ((match = route(/^\/api\/people\/([^/]+)\/merge$/, "POST"))) {
+      const from = people.find((p) => p.id === match![1])!;
+      people = people.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, faceCount: p.faceCount + from.faceCount } : p));
+      return new Response(null, { status: 204 });
+    }
+    if ((match = route(/^\/api\/people\/([^/]+)$/, "DELETE"))) {
+      people = people.filter((p) => p.id !== match![1]);
+      return new Response(null, { status: 204 });
+    }
+    if (route(/^\/api\/face-data$/, "DELETE")) {
+      people = [];
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  return { requests };
+}
+
+const crew: Analysis = {
+  ...analysis,
+  faces: [
+    { id: "face-a", box: { x: 0.2, y: 0.3, width: 0.1, height: 0.15 }, person: { id: "neil", name: "Neil" } },
+    { id: "face-b", box: { x: 0.45, y: 0.15, width: 0.1, height: 0.15 } },
+    { id: "face-c", box: { x: 0.7, y: 0.3, width: 0.1, height: 0.15 } },
+  ],
+};
+
+const crewPeople = (): PersonSummary[] => [
+  { id: "buzz", name: "Buzz Aldrin", faceCount: 3 },
+  { id: "mike", name: "Michael Collins", faceCount: 1 },
+  { id: "neil", name: "Neil", faceCount: 2 },
+];
+
+async function openCrew() {
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  await screen.findByRole("img", { name: "beach.jpg" });
+}
+
+const faceBox = (name: string | RegExp) =>
+  within(screen.getByRole("list", { name: "Face boxes" })).getByRole("button", { name });
+
+it("labels each Face box with its Person's name", async () => {
+  fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  expect(faceBox("Face 1: Neil")).toHaveTextContent("Neil");
+  expect(faceBox("Face 2")).toBeInTheDocument();
+});
+
+it("names a Face by clicking its box and picking an existing Person from the autocomplete", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 3"));
+  const form = screen.getByRole("form", { name: "Name Face 3" });
+  await userEvent.type(within(form).getByRole("combobox", { name: "Name" }), "IN");
+  const options = within(form).getByRole("listbox", { name: "People" });
+  // Matches anywhere in the name, ignoring case.
+  expect(within(options).getAllByRole("option").map((o) => o.textContent)).toEqual(["Buzz Aldrin", "Michael Collins"]);
+  await userEvent.click(within(options).getByRole("option", { name: "Buzz Aldrin" }));
+
+  expect(server.requests).toContainEqual({ method: "PUT", url: "/api/faces/face-c/person", body: { name: "Buzz Aldrin" } });
+  expect(await screen.findByRole("button", { name: "Face 3: Buzz Aldrin" })).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "Name Face 3" })).not.toBeInTheDocument();
+});
+
+it("names a Face with a new name, which creates a Person", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Mike{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PUT", url: "/api/faces/face-b/person", body: { name: "Mike" } });
+  expect(await screen.findByRole("button", { name: "Face 2: Mike" })).toBeInTheDocument();
+});
+
+it("starts the name field with the Face's current name", async () => {
+  fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 1: Neil"));
+
+  expect(screen.getByRole("combobox", { name: "Name" })).toHaveValue("Neil");
+});
+
+it('removes a box marked "Not a face" and renumbers the rest', async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.click(screen.getByRole("button", { name: "Not a face" }));
+
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/faces/face-b/not-a-face", body: undefined });
+  await screen.findByRole("region", { name: "Faces (2)" });
+  const boxes = within(screen.getByRole("list", { name: "Face boxes" })).getAllByRole("button");
+  expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual(["Face 1: Neil", "Face 2"]);
+});
+
+it("shows the server's message when a Face can no longer be named", async () => {
+  fakeFaceServer(crew, crewPeople());
+  await openCrew();
+  vi.mocked(fetch).mockImplementation(async (input) =>
+    String(input) === "/api/people"
+      ? Response.json({ people: [] })
+      : Response.json({ error: { message: "This Face is no longer stored. Open the Photo again." } }, { status: 404 }),
+  );
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Mike{Enter}");
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("This Face is no longer stored. Open the Photo again.");
+  expect(faceBox("Face 2")).toBeInTheDocument();
+});
+
+async function openPeoplePanel() {
+  await userEvent.click(screen.getByRole("button", { name: "People" }));
+  return screen.findByRole("region", { name: "People" });
+}
+
+const personRow = (panel: HTMLElement, name: string) =>
+  within(within(panel).getByRole("list", { name: "People" }))
+    .getAllByRole("listitem")
+    .find((row) => within(row).queryByText(name, { selector: ".person-name" }))!;
+
+it("lists People with their Face counts in the People panel, even before a Photo is opened", async () => {
+  fakeFaceServer(crew, crewPeople());
+  render(<App />);
+
+  const panel = await openPeoplePanel();
+
+  expect(await within(panel).findByText("Buzz Aldrin")).toBeInTheDocument();
+  expect(within(personRow(panel, "Buzz Aldrin")).getByText("3 Faces")).toBeInTheDocument();
+  expect(within(personRow(panel, "Michael Collins")).getByText("1 Face")).toBeInTheDocument();
+});
+
+it("renames a Person, renaming their Faces in the opened Photo", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Rename Neil" }));
+  const field = within(panel).getByRole("textbox", { name: "New name for Neil" });
+  await userEvent.clear(field);
+  await userEvent.type(field, "Neil Armstrong{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PATCH", url: "/api/people/neil", body: { name: "Neil Armstrong" } });
+  expect(await screen.findByRole("button", { name: "Face 1: Neil Armstrong" })).toBeInTheDocument();
+  expect(await within(panel).findByText("Neil Armstrong")).toBeInTheDocument();
+});
+
+it("merges one Person into another after a confirmation", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Merge Neil" }));
+  await userEvent.selectOptions(within(panel).getByRole("combobox", { name: "Merge Neil into" }), "Buzz Aldrin");
+  await userEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Merge Neil into Buzz Aldrin?"));
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/people/neil/merge", body: { into: "buzz" } });
+  expect(await screen.findByRole("button", { name: "Face 1: Buzz Aldrin" })).toBeInTheDocument();
+  await waitFor(() => expect(within(personRow(panel, "Buzz Aldrin")).getByText("5 Faces")).toBeInTheDocument());
+  expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument();
+});
+
+it("deletes a Person after a confirmation, leaving their Faces unnamed, and does nothing when it is declined", async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+  const deleteNeil = () => userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Delete Neil" }));
+
+  await deleteNeil();
+  expect(server.requests.some((r) => r.method === "DELETE")).toBe(false);
+
+  await deleteNeil();
+  expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining("Delete Neil?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/people/neil", body: undefined });
+  expect(await screen.findByRole("button", { name: "Face 1" })).toBeInTheDocument();
+  await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument());
+});
+
+it('deletes all face data after a confirmation, emptying the People panel', async () => {
+  const server = fakeFaceServer(crew, crewPeople());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(panel).getByRole("button", { name: "Delete all face data" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Delete all face data?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/face-data", body: undefined });
+  expect(await within(panel).findByText("No one has been named yet.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Face 1" })).toBeInTheDocument();
 });

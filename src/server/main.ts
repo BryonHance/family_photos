@@ -1,10 +1,11 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { serve } from "@hono/node-server";
 import { exiftool } from "exiftool-vendored";
 import { createApp } from "./app.ts";
 import { FaceModelError, loadFaceDetector } from "./faces/detector.ts";
+import { openFaceStore } from "./faces/store.ts";
 import { createProductionApp } from "./production.ts";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -21,6 +22,11 @@ try {
   process.exit(1);
 }
 
+// Face data only (ADR-0002): in Docker a named volume, kept out of off-server backups.
+const facesDb = process.env.FACES_DB ?? join(import.meta.dirname, "../../data/faces.db");
+await mkdir(dirname(facesDb), { recursive: true });
+const faceStore = openFaceStore(facesDb);
+
 const tempDir = await mkdtemp(join(tmpdir(), "family-photos-"));
 // Set in the Docker image. In development Vite serves the UI and proxies /api here.
 const uiDir = process.env.UI_DIR;
@@ -28,8 +34,8 @@ const uiDir = process.env.UI_DIR;
 const maxUploadBytes = 200 * 1024 * 1024; // 200 MB
 
 const app = uiDir
-  ? createProductionApp({ exiftool, tempDir, faceDetector, maxUploadBytes, uiDir })
-  : createApp({ exiftool, tempDir, faceDetector, maxUploadBytes });
+  ? createProductionApp({ exiftool, tempDir, faceDetector, faceStore, maxUploadBytes, uiDir })
+  : createApp({ exiftool, tempDir, faceDetector, faceStore, maxUploadBytes });
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`${uiDir ? "Viewer" : "Analyze API"} listening on http://localhost:${port}`);

@@ -49,10 +49,25 @@ body {
   border: 2px solid #facc15;
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
-  pointer-events: none;
 }
 
-.face-box span {
+/* The whole box is the button that selects its Face for naming. */
+.face-box button {
+  all: unset;
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.face-box button[aria-pressed="true"] {
+  outline: 3px solid #fff;
+}
+
+.face-box button:focus-visible {
+  outline: 3px solid #fff;
+}
+
+.face-box button > span {
   position: absolute;
   top: -2px;
   left: -2px;
@@ -61,19 +76,126 @@ body {
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.4;
+  white-space: nowrap;
   color: #000;
   background: #facc15;
 }
 
+.face-box .face-name {
+  left: auto;
+  top: auto;
+  bottom: -2px;
+  transform: translateY(100%);
+  font-weight: 500;
+}
+
 .faces {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0 1rem;
 }
 
 .faces h2 {
   margin: 0.5rem 0;
+}
+
+.faces > .hint,
+.face-form {
+  flex-basis: 100%;
+}
+
+.faces > .hint {
+  margin: 0 0 0.5rem;
+  opacity: 0.7;
+}
+
+.face-form {
+  margin-bottom: 1rem;
+}
+
+.face-form label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.face-form input,
+.people input,
+.people select {
+  font: inherit;
+  padding: 0.25rem 0.4rem;
+}
+
+.face-form input {
+  flex: 1;
+}
+
+.name-options {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.25rem;
+}
+
+.name-options li {
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+.name-options li:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.face-actions,
+.person-actions {
+  display: inline-flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.people-panel {
+  margin-bottom: 1rem;
+}
+
+.people {
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.5rem;
+}
+
+.people h2 {
+  margin-top: 0;
+}
+
+.people ul {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.person {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.person-name {
+  font-weight: 600;
+}
+
+.person-count {
+  opacity: 0.7;
+}
+
+.person-actions {
+  margin: 0 0 0 1rem;
+}
+
+.danger {
+  color: #c62828;
 }
 
 .warnings {

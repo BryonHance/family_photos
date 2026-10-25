@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import { openFaceStore } from "./faces/store.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
 const modelsDir = join(import.meta.dirname, "../../models");
@@ -27,7 +28,7 @@ afterAll(async () => {
 });
 
 async function analyze(fixtureName: string): Promise<Analysis> {
-  const app = createApp({ exiftool, tempDir, faceDetector, maxUploadBytes: 1024 * 1024 });
+  const app = createApp({ exiftool, tempDir, faceDetector, faceStore: openFaceStore(":memory:"), maxUploadBytes: 1024 * 1024 });
   const form = new FormData();
   form.append("photo", new File([await readFile(fixture(fixtureName))], fixtureName));
   const res = await app.request("/api/analyze", { method: "POST", body: form });
@@ -85,5 +86,34 @@ describe("Faces", () => {
     const analysis = await analyze("crew.tif");
     expect(analysis.photo.mimeType).toBe("image/tiff");
     expect(analysis.faces).toEqual([]);
+  });
+});
+
+describe("Face embeddings", () => {
+  const detectFixture = async (name: string) =>
+    faceDetector.detect({ kind: "encoded", bytes: await readFile(fixture(name)) });
+  const cosine = (a: Float32Array, b: Float32Array) => a.reduce((sum, v, i) => sum + v * b[i]!, 0);
+
+  it("gives each Face a unit-length 512-number embedding", async () => {
+    const faces = await detectFixture("crew.jpg");
+
+    expect(faces).toHaveLength(3);
+    for (const { embedding } of faces) {
+      expect(embedding).toHaveLength(512);
+      expect(cosine(embedding, embedding)).toBeCloseTo(1, 4);
+    }
+  });
+
+  it("gives the same Face in two Photos near-identical embeddings, and different Faces distant ones", async () => {
+    // crew-rotated.jpg is the same portrait stored sideways: the same three Faces.
+    const upright = await detectFixture("crew.jpg");
+    const rotated = await detectFixture("crew-rotated.jpg");
+
+    upright.forEach((face, i) => {
+      expect(cosine(face.embedding, rotated[i]!.embedding), `Face ${i + 1} in both`).toBeGreaterThan(0.9);
+      upright.forEach((other, j) => {
+        if (i !== j) expect(cosine(face.embedding, other.embedding), `Faces ${i + 1} and ${j + 1}`).toBeLessThan(0.4);
+      });
+    });
   });
 });

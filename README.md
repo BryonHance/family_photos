@@ -1,6 +1,6 @@
 # Family Photos
 
-A private web viewer for the metadata inside family Photos. Drop a Photo in the browser; the server reads it with ExifTool, returns its Fields, and deletes it. Photos are never modified, never retained, and never sent anywhere beyond the personal server ([ADR-0001](docs/adr/0001-read-only-non-retaining-private.md)).
+A private web viewer for the metadata inside family Photos. Drop a Photo in the browser; the server reads it with ExifTool, returns its Fields, and deletes it. Photos are never modified, never retained, and never sent anywhere beyond the personal server ([ADR-0001](docs/adr/0001-read-only-non-retaining-private.md)). The viewer finds the Faces in each Photo and lets you name them. To recognise a Person across Photos it keeps face data on the server, but never the Photo or any image of a Face ([ADR-0002](docs/adr/0002-face-embeddings-are-retained-on-the-server.md)).
 
 ## Development
 
@@ -23,6 +23,14 @@ The viewer finds Faces with InsightFace's [`buffalo_sc`](https://github.com/deep
 - the Docker build downloads them and checks their pinned SHA-256s, and the image is built only on the personal server and never pushed to a registry.
 
 Anyone forking this repository for another purpose must check the licence for themselves. See `docs/research/face-recognition-on-cpu.md` §6.
+
+## Face data
+
+Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, and the name of each Person. It holds nothing else. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
+
+- In Docker, `faces.db` lives in the named volume `face-data`, mounted at `/app/data`. In development it is `data/faces.db`, which git ignores. Set `FACES_DB` to put it elsewhere.
+- **Keep the `face-data` volume out of every backup that leaves the server**, such as cloud or off-site backups. If the server is lost, open the Photos again to name each Person again.
+- "Delete all face data" in the People panel empties the file. Removing the volume (`docker compose down` then `docker volume rm family_photos_face-data`, or whatever name `docker volume ls` shows) also deletes it.
 
 ## Deployment
 

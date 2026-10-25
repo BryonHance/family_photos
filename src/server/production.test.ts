@@ -5,6 +5,7 @@ import { ExifTool } from "exiftool-vendored";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import { openFaceStore } from "./faces/store.ts";
 import { createProductionApp } from "./production.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
@@ -31,7 +32,7 @@ afterAll(async () => {
   await rm(uiDir, { recursive: true, force: true });
 });
 
-const app = () => createProductionApp({ exiftool, tempDir, faceDetector, maxUploadBytes: 1024 * 1024, uiDir });
+const app = () => createProductionApp({ exiftool, tempDir, faceDetector, faceStore: openFaceStore(":memory:"), maxUploadBytes: 1024 * 1024, uiDir });
 
 describe("production server", () => {
   it("serves the UI at the root", async () => {
