@@ -18,14 +18,13 @@ export function faceRoutes(store: FaceStore) {
     const name = await nameIn(c);
     if (!name) return noName(c);
     const person = store.nameFace(c.req.param("id"), name);
-    return person ? c.json<PersonRef>(person) : noSuchFace(c);
+    return person === "no-face" ? noSuchFace(c) : c.json<PersonRef>(person);
   });
 
   // ✓ and ✕ on a Suggestion. The body names the suggested Person, so that what
   // is confirmed or rejected is what the user saw.
   app.post("/faces/:id/suggestion/:verdict{confirm|reject}", async (c) => {
-    const body: unknown = await c.req.json().catch(() => undefined);
-    const personId = typeof body === "object" && body !== null && "personId" in body ? body.personId : undefined;
+    const personId = await fieldIn(c, "personId");
     if (typeof personId !== "string") return problem(c, 400, "Say which Person was suggested.");
     const faceId = c.req.param("id");
     const result =
@@ -47,20 +46,19 @@ export function faceRoutes(store: FaceStore) {
     const name = await nameIn(c);
     if (!name) return noName(c);
     const result = store.renamePerson(c.req.param("id"), name);
-    if (result === "not-found") return noSuchPerson(c);
-    if (result === "taken") {
+    if (result === "no-person") return noSuchPerson(c);
+    if (result === "name-taken") {
       return c.json({ error: { message: `Someone is already called ${name}. Merge them instead.` } }, 409);
     }
     return c.json<PersonRef>(result);
   });
 
   app.post("/people/:id/merge", async (c) => {
-    const body: unknown = await c.req.json().catch(() => undefined);
-    const into = typeof body === "object" && body !== null && "into" in body ? body.into : undefined;
+    const into = await fieldIn(c, "into");
     if (typeof into !== "string") return problem(c, 400, "Say which Person to merge into.");
     const result = store.mergePeople(c.req.param("id"), into);
-    if (result === "same") return problem(c, 400, "A Person cannot be merged into themselves.");
-    if (result === "not-found") return noSuchPerson(c);
+    if (result === "same-person") return problem(c, 400, "A Person cannot be merged into themselves.");
+    if (result === "no-person") return noSuchPerson(c);
     return c.body(null, 204);
   });
 
@@ -74,9 +72,14 @@ export function faceRoutes(store: FaceStore) {
   return app;
 }
 
+/** One field of a JSON body, of whatever type; undefined when the body is not a JSON object or lacks it. */
+async function fieldIn(c: Context, field: string): Promise<unknown> {
+  const body: unknown = await c.req.json().catch(() => undefined);
+  return typeof body === "object" && body !== null && field in body ? (body as Record<string, unknown>)[field] : undefined;
+}
+
 /** The `name` of a JSON body, without spaces around it; undefined when there is none. */
 async function nameIn(c: Context): Promise<string | undefined> {
-  const body: unknown = await c.req.json().catch(() => undefined);
-  const name = typeof body === "object" && body !== null && "name" in body ? body.name : undefined;
+  const name = await fieldIn(c, "name");
   return typeof name === "string" && name.trim() !== "" ? name.trim() : undefined;
 }

@@ -59,9 +59,6 @@ const SCHEMA = `
   );
 `;
 
-/** A Face as the store returns it: what the Analysis shows. */
-export type StoredFace = Face;
-
 /** A Face as the detector found it, before it is stored. */
 export type NewFace = { box: Box; embedding: Float32Array };
 
@@ -141,7 +138,7 @@ export function openFaceStore(path: string) {
   );
   const findPersonByName = db.prepare("SELECT id, name FROM people WHERE name = ?");
   const insertPerson = db.prepare("INSERT INTO people (id, name) VALUES (?, ?)");
-  const findPerson = db.prepare("SELECT id FROM people WHERE id = ?");
+  const findPerson = db.prepare("SELECT id, name FROM people WHERE id = ?");
   const renamePerson = db.prepare("UPDATE people SET name = ? WHERE id = ?");
   const movePersonFaces = db.prepare("UPDATE faces SET person_id = ? WHERE person_id = ?");
   // Their Faces are left unnamed by ON DELETE SET NULL.
@@ -189,7 +186,6 @@ export function openFaceStore(path: string) {
   const rejectSuggestion = db.prepare("INSERT OR IGNORE INTO rejected_suggestions (face_id, person_id) VALUES (?, ?)");
   const forgetRejections = db.prepare("DELETE FROM rejected_suggestions WHERE face_id = ?");
   const photoOfFace = db.prepare("SELECT photo_sha256 FROM faces WHERE id = ? AND not_a_face = 0");
-  const findPersonById = db.prepare("SELECT id, name FROM people WHERE id = ?");
 
   const modelVersionOfPhoto = db.prepare("SELECT model_version FROM photos WHERE sha256 = ?");
   const setModelVersionOfPhoto = db.prepare("INSERT OR REPLACE INTO photos (sha256, model_version) VALUES (?, ?)");
@@ -204,7 +200,7 @@ export function openFaceStore(path: string) {
    * The Faces of a stored Photo as the Analysis shows them, after placing each
    * unnamed Face that has no Suggestion and no Stranger in one. Call it inside a transaction.
    */
-  function present(sha256: string): StoredFace[] {
+  function present(sha256: string): Face[] {
     let suggestions = suggestionsFor(sha256);
     if (joinStrangers(sha256, suggestions)) suggestions = suggestionsFor(sha256);
     return visible(rowsOf(sha256), suggestions);
@@ -223,8 +219,8 @@ export function openFaceStore(path: string) {
     const waiting = own.filter((f) => f.person_id === null && f.stranger_id === null && !suggestions.has(f.id));
     const modelVersion = waiting[0]?.model_version;
     if (modelVersion == null) return false;
-    const barred = new Set(
-      (barredStrangers.all(sha256) as { face_id: string; stranger_id: number }[]).map((r) => `${r.face_id} ${r.stranger_id}`),
+    const barred = pairSet(
+      (barredStrangers.all(sha256) as { face_id: string; stranger_id: number }[]).map((r) => [r.face_id, r.stranger_id] as const),
     );
     const members = (strangerMembers.all(modelVersion) as { photo_sha256: string; embedding: Uint8Array; stranger_id: number }[])
       .filter((m) => m.photo_sha256 !== sha256)
@@ -234,7 +230,7 @@ export function openFaceStore(path: string) {
       const embedding = embeddingOf(face.embedding);
       let nearest: { strangerId: number; score: number } | undefined;
       for (const member of members) {
-        if (barred.has(`${face.id} ${member.strangerId}`)) continue;
+        if (barred.has(face.id, member.strangerId)) continue;
         const score = cosine(embedding, member.embedding);
         if (score >= STRANGER_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { strangerId: member.strangerId, score };
       }
@@ -267,8 +263,8 @@ export function openFaceStore(path: string) {
         embedding: embeddingOf(row.embedding),
       }));
 
-    const rejected = new Set(
-      (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => `${r.face_id} ${r.person_id}`),
+    const rejected = pairSet(
+      (rejectionsOfPhoto.all(sha256) as { face_id: string; person_id: string }[]).map((r) => [r.face_id, r.person_id] as const),
     );
 
     // Each Face's own best Person first; only then are clashes settled.
@@ -277,7 +273,7 @@ export function openFaceStore(path: string) {
       const embedding = embeddingOf(face.embedding);
       const best = new Map<string, { person: PersonRef; score: number; sameStranger: boolean }>();
       for (const candidate of named) {
-        if (rejected.has(`${face.id} ${candidate.person.id}`)) continue;
+        if (rejected.has(face.id, candidate.person.id)) continue;
         const score = cosine(embedding, candidate.embedding);
         const sameStranger = face.stranger_id !== null && candidate.strangerId === face.stranger_id;
         const known = best.get(candidate.person.id);
@@ -321,7 +317,7 @@ export function openFaceStore(path: string) {
      * stored ones, each inheriting the Person or "Not a face" mark, and the
      * rejected Suggestions, of an old Face whose box it mostly overlaps.
      */
-    async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<StoredFace[]> {
+    async facesOfPhoto(photo: PhotoKey, detect: () => Promise<NewFace[]>): Promise<Face[]> {
       if (isCurrent(photo)) return transaction(() => present(photo.sha256));
       const detected = await detect();
       return transaction(() => {
@@ -361,12 +357,12 @@ export function openFaceStore(path: string) {
 
     /**
      * Names a Face: the Person with this name, ignoring case and spaces around
-     * it, or a new Person. Undefined when there is no such Face, or it is marked "Not a face".
+     * it, or a new Person. "no-face" when there is no such Face, or it is marked "Not a face".
      */
-    nameFace(faceId: string, name: string): PersonRef | undefined {
+    nameFace(faceId: string, name: string): PersonRef | "no-face" {
       return transaction(() => {
         const face = findFace.get(faceId) as { not_a_face: number } | undefined;
-        if (!face || face.not_a_face === 1) return undefined;
+        if (!face || face.not_a_face === 1) return "no-face";
         const person = personNamed(name);
         setPersonOfFace.run(person.id, faceId);
         return person;
@@ -377,7 +373,7 @@ export function openFaceStore(path: string) {
     confirmSuggestion(faceId: string, personId: string): PersonRef | "no-face" | "no-person" {
       return transaction(() => {
         if (!photoOfFace.get(faceId)) return "no-face";
-        const person = findPersonById.get(personId) as PersonRef | undefined;
+        const person = findPerson.get(personId) as PersonRef | undefined;
         if (!person) return "no-person";
         setPersonOfFace.run(person.id, faceId);
         return { id: person.id, name: person.name };
@@ -388,11 +384,11 @@ export function openFaceStore(path: string) {
      * Remembers that a Face is not this Person, so they are never suggested for
      * it again. Returns the Face as it now stands.
      */
-    rejectSuggestion(faceId: string, personId: string): StoredFace | "no-face" | "no-person" {
+    rejectSuggestion(faceId: string, personId: string): Face | "no-face" | "no-person" {
       return transaction(() => {
         const photo = photoOfFace.get(faceId) as { photo_sha256: string } | undefined;
         if (!photo) return "no-face";
-        if (!findPersonById.get(personId)) return "no-person";
+        if (!findPerson.get(personId)) return "no-person";
         rejectSuggestion.run(faceId, personId);
         // Out of a Stranger that has a Face named as this Person; it then joins another by the usual rule.
         if (leaveStrangerOfPerson.run(faceId, personId).changes > 0) deleteEmptyStrangers.run();
@@ -416,22 +412,22 @@ export function openFaceStore(path: string) {
     /** Every Person, by name, with how many Faces are named as them. */
     people: () => listPeople.all() as PersonSummary[],
 
-    /** "taken" when another Person already has the name, ignoring case. */
-    renamePerson(personId: string, name: string): PersonRef | "not-found" | "taken" {
+    /** "name-taken" when another Person already has the name, ignoring case. */
+    renamePerson(personId: string, name: string): PersonRef | "no-person" | "name-taken" {
       return transaction(() => {
-        if (!findPerson.get(personId)) return "not-found";
+        if (!findPerson.get(personId)) return "no-person";
         const holder = findPersonByName.get(name) as PersonRef | undefined;
-        if (holder && holder.id !== personId) return "taken";
+        if (holder && holder.id !== personId) return "name-taken";
         renamePerson.run(name, personId);
         return { id: personId, name };
       });
     },
 
     /** Names every Face of `personId` as `intoPersonId` instead, then deletes `personId`. */
-    mergePeople(personId: string, intoPersonId: string): "merged" | "not-found" | "same" {
-      if (personId === intoPersonId) return "same";
+    mergePeople(personId: string, intoPersonId: string): "merged" | "no-person" | "same-person" {
+      if (personId === intoPersonId) return "same-person";
       return transaction(() => {
-        if (!findPerson.get(personId) || !findPerson.get(intoPersonId)) return "not-found";
+        if (!findPerson.get(personId) || !findPerson.get(intoPersonId)) return "no-person";
         movePersonFaces.run(intoPersonId, personId);
         deletePerson.run(personId);
         return "merged";
@@ -485,11 +481,11 @@ export function openFaceStore(path: string) {
 const STRANGER_LABEL_PHOTOS = 2;
 
 /** Each Face shows at most one of its Person, its Suggestion, or its Stranger's label. */
-function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFace[] {
+function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): Face[] {
   return rows
     .filter((r) => r.not_a_face === 0)
     .map((r) => {
-      const face: StoredFace = { id: r.id, box: boxOf(r) };
+      const face: Face = { id: r.id, box: boxOf(r) };
       const suggestion = suggestions.get(r.id);
       if (r.person_id !== null && r.person_name !== null) face.person = { id: r.person_id, name: r.person_name };
       else if (suggestion) face.suggestion = suggestion;
@@ -498,6 +494,13 @@ function visible(rows: FaceRow[], suggestions: Map<string, PersonRef>): StoredFa
       }
       return face;
     });
+}
+
+/** A set of pairs, such as (Face, rejected Person). */
+function pairSet<A, B>(pairs: Iterable<readonly [A, B]>) {
+  const byFirst = new Map<A, Set<B>>();
+  for (const [a, b] of pairs) byFirst.set(a, (byFirst.get(a) ?? new Set<B>()).add(b));
+  return { has: (a: A, b: B) => byFirst.get(a)?.has(b) ?? false };
 }
 
 /** The embedding a BLOB holds: 512 float32s, copied so that its alignment does not matter. */
