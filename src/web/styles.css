@@ -52,22 +52,22 @@ body {
 }
 
 /* The whole box is the button that selects its Face for naming. */
-.face-box button {
+.face-box > button {
   all: unset;
   position: absolute;
   inset: 0;
   cursor: pointer;
 }
 
-.face-box button[aria-pressed="true"] {
+.face-box > button[aria-pressed="true"] {
   outline: 3px solid #fff;
 }
 
-.face-box button:focus-visible {
+.face-box > button:focus-visible {
   outline: 3px solid #fff;
 }
 
-.face-box button > span {
+.face-box > button > span {
   position: absolute;
   top: -2px;
   left: -2px;
@@ -87,6 +87,50 @@ body {
   bottom: -2px;
   transform: translateY(100%);
   font-weight: 500;
+}
+
+/* A Suggestion is dashed until it is confirmed; a Stranger's Faces are grey. */
+.face-box.suggested {
+  border-style: dashed;
+}
+
+.face-box.suggested .face-name {
+  font-style: italic;
+}
+
+.face-box.stranger {
+  border-color: #d4d4d4;
+}
+
+.face-box.stranger > button > span {
+  background: #d4d4d4;
+}
+
+/* ✓ and ✕ sit above the box's top right corner, beside its number. */
+.suggestion-actions {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: flex;
+  gap: 2px;
+  transform: translateY(-100%);
+}
+
+.suggestion-actions button {
+  min-width: 1.6em;
+  padding: 0 0.2em;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #000;
+  background: #facc15;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.suggestion-actions button:focus-visible {
+  outline: 3px solid #fff;
 }
 
 .faces {

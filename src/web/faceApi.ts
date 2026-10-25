@@ -1,5 +1,5 @@
 // The browser's side of the face routes in src/server/faces/api.ts.
-import type { PersonRef, PersonSummary } from "../shared/analysis.ts";
+import type { Face, PersonRef, PersonSummary } from "../shared/analysis.ts";
 
 /** A face route refused the request; the message is the server's, ready to show. */
 export class FaceApiError extends Error {}
@@ -25,6 +25,11 @@ async function send(method: string, url: string, body?: unknown): Promise<Respon
 export const faceApi = {
   nameFace: async (faceId: string, name: string) =>
     (await (await send("PUT", `/api/faces/${encodeURIComponent(faceId)}/person`, { name })).json()) as PersonRef,
+  confirmSuggestion: async (faceId: string, personId: string) =>
+    (await (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/suggestion/confirm`, { personId })).json()) as PersonRef,
+  /** Returns the Face as it now stands. */
+  rejectSuggestion: async (faceId: string, personId: string) =>
+    (await (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/suggestion/reject`, { personId })).json()) as Face,
   markNotAFace: async (faceId: string) => void (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/not-a-face`)),
   people: async () => ((await (await send("GET", "/api/people")).json()) as { people: PersonSummary[] }).people,
   renamePerson: async (personId: string, name: string) =>

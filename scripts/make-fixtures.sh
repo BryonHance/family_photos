@@ -144,3 +144,9 @@ magick "$out/crew.jpg" -compress jpeg "$out/crew.tif"
 
 # A corner of the same Photo, background and Moon only, with no Faces.
 magick "$out/crew.jpg" -crop 300x180+0+0 +repage -quality 80 "$out/no-faces.jpg"
+
+# Armstrong twice in one Photo, for "two Faces in one Photo are never suggested
+# as the same Person": his head and shoulders cropped from crew.jpg, then beside
+# them the same crop mirrored. Mirroring makes the right-hand Face a slightly
+# weaker match for him than the left-hand one.
+magick "$out/crew.jpg" -crop 220x260+87+125 +repage \( +clone -flop \) +append -strip -quality 85 "$out/armstrong-twice.jpg"

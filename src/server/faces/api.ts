@@ -21,6 +21,22 @@ export function faceRoutes(store: FaceStore) {
     return person ? c.json<PersonRef>(person) : noSuchFace(c);
   });
 
+  // ✓ and ✕ on a Suggestion. The body names the suggested Person, so that what
+  // is confirmed or rejected is what the user saw.
+  app.post("/faces/:id/suggestion/:verdict{confirm|reject}", async (c) => {
+    const body: unknown = await c.req.json().catch(() => undefined);
+    const personId = typeof body === "object" && body !== null && "personId" in body ? body.personId : undefined;
+    if (typeof personId !== "string") return problem(c, 400, "Say which Person was suggested.");
+    const faceId = c.req.param("id");
+    const result =
+      c.req.param("verdict") === "confirm"
+        ? store.confirmSuggestion(faceId, personId)
+        : store.rejectSuggestion(faceId, personId);
+    if (result === "no-face") return noSuchFace(c);
+    if (result === "no-person") return noSuchPerson(c);
+    return c.json(result);
+  });
+
   app.post("/faces/:id/not-a-face", (c) =>
     store.markNotAFace(c.req.param("id")) ? c.body(null, 204) : noSuchFace(c),
   );
