@@ -391,7 +391,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     },
 
     /**
-     * Marks an Animal "Not a pet":it keeps only its box and the Photo's hash,
+     * Marks an Animal "Not a pet": it keeps only its box and the Photo's hash,
      * and stays hidden whenever the Photo is reopened. False when there is no such Animal.
      */
     markNotAPet(animalId: string): boolean {
