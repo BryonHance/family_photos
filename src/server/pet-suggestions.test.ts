@@ -323,6 +323,17 @@ describe("Unknown pets", () => {
       expect((await reopen("dog.jpg")).suggestion).toEqual(tom);
     });
 
+    it("suggests the named Pet for the rest even when another Pet is a nearer match", async () => {
+      const { a } = await uploadChain();
+      const tom = await api.nameAnimal(a.id, "Tom");
+      // Rex is like C (cosine 0.68, enough for a Suggestion) but not enough to join its Unknown pet.
+      const rexAt80 = animalsWith({ 0: 0.68 * Math.cos((80 * Math.PI) / 180), 1: 0.68 * Math.sin((80 * Math.PI) / 180), 2: Math.sqrt(1 - 0.68 ** 2) });
+      const [rexAnimal] = (await api.upload("cat.png", { animals: rexAt80 })).animals;
+      await api.nameAnimal(rexAnimal!.id, "Rex");
+
+      expect((await reopen("person-and-dog.jpg")).suggestion).toEqual(tom);
+    });
+
     it("keeps one state per Animal: naming or confirming takes it out of its Unknown pet", async () => {
       const { a, b } = await uploadChain();
       const tom = await api.nameAnimal(a.id, "Tom");

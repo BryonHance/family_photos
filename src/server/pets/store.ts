@@ -283,8 +283,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
 
   /**
    * Each unnamed Animal's Suggestion: the Pet of its nearest named Animal in
-   * another Photo, at or above SUGGESTION_THRESHOLD, or a Pet its Unknown pet
-   * was named as however alike they are; unless the user rejected
+   * another Photo, at or above SUGGESTION_THRESHOLD; but a Pet its Unknown pet
+   * was named as comes first, however alike they are; unless the user rejected
    * that Pet for it. Species does not limit it: the detector's species is a hint,
    * not a fact about the Pet. A Pet already named in this Photo is not
    * suggested, and no two Animals of one Photo are suggested as the same Pet:
@@ -329,7 +329,12 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
           sameUnknownPet: sameUnknownPet || (known?.sameUnknownPet ?? false),
         });
       }
-      const qualifying = [...best.values()].filter((b) => b.sameUnknownPet || b.score >= SUGGESTION_THRESHOLD);
+      // A Pet its Unknown pet was named as comes before any other, however near ("Naming one of its
+      // Animals makes the rest Suggestions", spec #20).
+      const candidates = [...best.values()];
+      const ofItsGroup = candidates.filter((b) => b.sameUnknownPet);
+      const qualifying =
+        ofItsGroup.length > 0 ? ofItsGroup : candidates.filter((b) => b.score >= SUGGESTION_THRESHOLD);
       const nearest = qualifying.sort((a, b) => b.score - a.score)[0];
       if (nearest) pairs.push({ animalId: animal.id, pet: nearest.pet, score: nearest.score });
     }

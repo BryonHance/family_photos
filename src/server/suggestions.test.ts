@@ -273,6 +273,27 @@ describe("Strangers", () => {
       expect((await reopen("crew-rotated.jpg")).suggestion).toEqual(neil);
     });
 
+    it("suggests the named Person for the rest even when another Person is a nearer match", async () => {
+      const { a } = await uploadChain();
+      const neil = await api.nameFace(a.id, "Neil");
+      // Buzz is like C (cosine 0.55, enough for a Suggestion) but not enough to join its Stranger.
+      const buzzAt80: FaceDetector = {
+        modelVersion: faceDetector.modelVersion,
+        detect: async (photo) => {
+          const [face] = await faceDetector.detect(photo);
+          const embedding = new Float32Array(512);
+          embedding[0] = 0.55 * Math.cos((80 * Math.PI) / 180);
+          embedding[1] = 0.55 * Math.sin((80 * Math.PI) / 180);
+          embedding[2] = Math.sqrt(1 - 0.55 ** 2);
+          return [{ ...face!, embedding }];
+        },
+      };
+      const [buzzFace] = (await api.upload("person-and-dog.jpg", { detector: buzzAt80 })).faces;
+      await api.nameFace(buzzFace!.id, "Buzz");
+
+      expect((await reopen("armstrong-twice.jpg")).suggestion).toEqual(neil);
+    });
+
     it("keeps one state per Face: naming or confirming takes it out of its Stranger", async () => {
       const { a, b } = await uploadChain();
       const neil = await api.nameFace(a.id, "Neil");

@@ -278,8 +278,8 @@ export function openFaceStore(path: string) {
 
   /**
    * Each unnamed Face's Suggestion: the Person of its nearest named Face in
-   * another Photo, at or above SUGGESTION_THRESHOLD, or a Person its Stranger
-   * was named as however alike they are; unless the user rejected that
+   * another Photo, at or above SUGGESTION_THRESHOLD; but a Person its Stranger
+   * was named as comes first, however alike they are; unless the user rejected that
    * Person for it. A Person already named in this Photo is not
    * suggested, and no two Faces of one Photo are suggested as the same Person:
    * the better match wins, and the other Face gets no Suggestion at all (it then
@@ -324,7 +324,12 @@ export function openFaceStore(path: string) {
           sameStranger: sameStranger || (known?.sameStranger ?? false),
         });
       }
-      const qualifying = [...best.values()].filter((b) => b.sameStranger || b.score >= SUGGESTION_THRESHOLD);
+      // A Person its Stranger was named as comes before any other, however near ("Naming one of its
+      // Faces makes the rest Suggestions", spec #12).
+      const candidates = [...best.values()];
+      const ofItsGroup = candidates.filter((b) => b.sameStranger);
+      const qualifying =
+        ofItsGroup.length > 0 ? ofItsGroup : candidates.filter((b) => b.score >= SUGGESTION_THRESHOLD);
       const nearest = qualifying.sort((a, b) => b.score - a.score)[0];
       if (nearest) pairs.push({ faceId: face.id, person: nearest.person, score: nearest.score });
     }
