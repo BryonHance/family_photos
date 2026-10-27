@@ -45,12 +45,26 @@ Someone the user has named, recognised by their Faces across Photos.
 _Avoid_: Subject, identity, cluster, people tag
 
 **Suggestion**:
-A Person the viewer thinks a Face shows, waiting for the user to confirm or reject it.
+A Person or Pet the viewer thinks a Face or Animal shows, waiting for the user to confirm or reject it.
 _Avoid_: Match, guess, prediction, auto-tag
 
 **Stranger**:
 A set of unnamed Faces the viewer believes show the same person, shown as "Unknown 4".
 _Avoid_: Cluster, group, unknown person
+
+### Pets in the photo
+
+**Animal**:
+A region of a Photo that shows one cat or dog, its whole body rather than only its face.
+_Avoid_: Pet face, sighting, detection, animal crop
+
+**Pet**:
+A cat or dog the user has named, recognised by its Animals across Photos.
+_Avoid_: Subject, identity, animal Person, pet tag
+
+**Unknown pet**:
+A set of unnamed Animals the viewer believes show the same pet, shown as "Unknown pet 2".
+_Avoid_: Stranger, stray, cluster
 
 ### What the viewer works out
 
