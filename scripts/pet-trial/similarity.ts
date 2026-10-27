@@ -2,7 +2,7 @@
 // our pets apart? See docs/research/face-and-pet-recognition.md, open question 1.
 //
 //   pixi run pet-models                        # D-FINE-S and DINOv2-S
-//   pixi run -e pet-export pet-export          # Avito CLIP-L (optional; 1.7 GB download)
+//   pixi run models                            # Avito CLIP-L (optional; 1.7 GB download)
 //   pixi run pet-trial <sample-dir>
 //
 // <sample-dir> holds one folder per pet (any name), each holding Photos of that
