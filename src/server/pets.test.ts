@@ -7,9 +7,11 @@ import type { Analysis, Box } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import { openFaceStore } from "./faces/store.ts";
+import { cosine } from "./faces/similarity.ts";
 import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
+import { decodeUpright } from "./upright.ts";
 
-// These tests run the real buffalo_sc and D-FINE-S models: fetch them with `pixi run models`.
+// These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
 const modelsDir = join(import.meta.dirname, "../../models");
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
@@ -129,5 +131,32 @@ describe("Animals", () => {
     const analysis = await analyze(name);
     expect(analysis.photo.mimeType).toBe(mimeType);
     expect(analysis.animals).toEqual([]);
+  });
+});
+
+describe("Animal embeddings", () => {
+  const detectFixture = async (name: string) =>
+    animalDetector.detect((await decodeUpright({ kind: "encoded", bytes: await readFile(fixture(name)) }))!);
+
+  it("gives each Animal a unit-length 768-number embedding", async () => {
+    const animals = await detectFixture("cat-and-dog.jpg");
+
+    expect(animals).toHaveLength(2);
+    for (const { embedding } of animals) {
+      expect(embedding).toHaveLength(768);
+      expect(cosine(embedding, embedding)).toBeCloseTo(1, 4);
+    }
+  });
+
+  it("gives the same animal in two Photos close embeddings, and a cat and a dog distant ones", async () => {
+    // cat-and-dog.jpg puts cat.jpg and dog.jpg side by side, each shrunk, so their boxes differ.
+    // Well clear of the Suggestion threshold (0.65) either way.
+    const [cat] = await detectFixture("cat.jpg");
+    const [dog] = await detectFixture("dog.jpg");
+    const [catBeside, dogBeside] = await detectFixture("cat-and-dog.jpg");
+
+    expect(cosine(cat!.embedding, catBeside!.embedding)).toBeGreaterThan(0.75);
+    expect(cosine(dog!.embedding, dogBeside!.embedding)).toBeGreaterThan(0.75);
+    expect(cosine(cat!.embedding, dog!.embedding)).toBeLessThan(0.3);
   });
 });
