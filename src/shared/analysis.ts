@@ -60,6 +60,15 @@ export type Face = {
 /** A Stranger as a Face refers to them. */
 export type StrangerRef = { label: string; photoCount: number };
 
+/** What the viewer took an Animal for. A hint for the user, not a fact about a Pet. */
+export type Species = "cat" | "dog";
+
+/** A region of the Photo that shows one cat or dog, its whole body (GLOSSARY.md). */
+export type Animal = {
+  species: Species;
+  box: Box;
+};
+
 /** A Person as the People panel lists them. */
 export type PersonSummary = PersonRef & { faceCount: number };
 
@@ -71,6 +80,8 @@ export type Analysis = {
   sections: Section[];
   /** Ordered left to right. Empty when there are none, and for TIFF and RAW. Faces marked "Not a face" are left out. */
   faces: Face[];
+  /** Cats and dogs, ordered left to right. Empty when there are none, and for TIFF and RAW. */
+  animals: Animal[];
 };
 
 export type AnalyzeErrorKind = "no-photo" | "too-large" | "unsupported-file";

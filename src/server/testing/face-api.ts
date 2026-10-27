@@ -10,9 +10,13 @@ import type { Analysis, Face, PersonSummary } from "../../shared/analysis.ts";
 import { createApp } from "../app.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import { openFaceStore } from "../faces/store.ts";
+import { loadAnimalDetector, type AnimalDetector } from "../pets/detector.ts";
 
 export const modelsDir = join(import.meta.dirname, "../../../models");
 export const fixture = (name: string) => join(import.meta.dirname, "../../../fixtures", name);
+
+/** D-FINE-S, loaded once for every harness. */
+let sharedAnimalDetector: Promise<AnimalDetector> | undefined;
 
 export type FaceApi = Awaited<ReturnType<typeof openFaceApi>>;
 
@@ -27,8 +31,10 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
   await mkdir(tempDir);
   const dbPath = join(dir, "faces.db");
   const faceStore = openFaceStore(dbPath);
+  // Every Photo is searched for cats and dogs too, as in production.
+  const animalDetector = await (sharedAnimalDetector ??= loadAnimalDetector(modelsDir));
   const app = (detector: FaceDetector) =>
-    createApp({ exiftool, tempDir, faceDetector: detector, faceStore, maxUploadBytes: 5 * 1024 * 1024 });
+    createApp({ exiftool, tempDir, faceDetector: detector, faceStore, animalDetector, maxUploadBytes: 5 * 1024 * 1024 });
 
   async function call(method: string, path: string, body?: unknown, detector = faceDetector) {
     return app(detector).request(path, {

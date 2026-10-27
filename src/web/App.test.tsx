@@ -23,9 +23,10 @@ const analysis: Analysis = {
     },
   ],
   faces: [],
+  animals: [],
 };
 
-const photo = new File(["jpeg bytes"], "beach.jpg", { type: "image/jpeg" });
+const photo =new File(["jpeg bytes"], "beach.jpg", { type: "image/jpeg" });
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json(analysis)));

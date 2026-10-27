@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -55,4 +55,31 @@ describe("server startup", () => {
     expect(stderr).toContain("w600k_mbf.onnx");
     expect(stderr).toContain("pixi run models");
   });
+
+  it("refuses to start when the pet model is missing, naming pixi run models", async () => {
+    await copyFaceModels();
+
+    const { code, stderr } = await startServer(emptyModels);
+
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("dfine_s_coco.onnx");
+    expect(stderr).toContain("pixi run models");
+  });
+
+  it("refuses to start when the pet model is corrupt, naming pixi run models", async () => {
+    await copyFaceModels();
+    await mkdir(join(emptyModels, "pets"));
+    await writeFile(join(emptyModels, "pets", "dfine_s_coco.onnx"), "not a model");
+
+    const { code, stderr } = await startServer(emptyModels);
+
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("dfine_s_coco.onnx");
+    expect(stderr).toContain("pixi run models");
+  });
 });
+
+/** Good face models, so that only the pet models are at fault. */
+async function copyFaceModels() {
+  for (const name of ["det_500m.onnx", "w600k_mbf.onnx"]) await copyFile(join(modelsDir, name), join(emptyModels, name));
+}

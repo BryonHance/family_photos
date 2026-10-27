@@ -9,6 +9,7 @@ import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import { cosine } from "./faces/similarity.ts";
 import { openFaceStore } from "./faces/store.ts";
+import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
 const modelsDir = join(import.meta.dirname, "../../models");
@@ -17,11 +18,13 @@ const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", na
 let exiftool: ExifTool;
 let tempDir: string;
 let faceDetector: FaceDetector;
+let animalDetector: AnimalDetector;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
   faceDetector = await loadFaceDetector(modelsDir);
+  animalDetector = await loadAnimalDetector(modelsDir);
 });
 
 afterAll(async () => {
@@ -30,7 +33,14 @@ afterAll(async () => {
 });
 
 async function analyze(fixtureName: string): Promise<Analysis> {
-  const app = createApp({ exiftool, tempDir, faceDetector, faceStore: openFaceStore(":memory:"), maxUploadBytes: 1024 * 1024 });
+  const app = createApp({
+    exiftool,
+    tempDir,
+    faceDetector,
+    faceStore: openFaceStore(":memory:"),
+    animalDetector,
+    maxUploadBytes: 1024 * 1024,
+  });
   const form = new FormData();
   form.append("photo", new File([await readFile(fixture(fixtureName))], fixtureName));
   const res = await app.request("/api/analyze", { method: "POST", body: form });

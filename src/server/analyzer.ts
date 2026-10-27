@@ -2,9 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
-import type { Analysis, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
+import type { Analysis, Animal, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
 import type { FaceDetector } from "./faces/detector.ts";
 import type { FaceStore } from "./faces/store.ts";
+import type { AnimalDetector } from "./pets/detector.ts";
 import type { Pixels } from "./pixels.ts";
 import { decodeUprightHeic, isHeic, previewFor } from "./preview.ts";
 import {
@@ -29,6 +30,8 @@ export type AnalyzerConfig = {
   faceDetector: FaceDetector;
   /** Keeps each Face's box, embedding and Person, by the Photo's hash, and never the Photo (ADR-0002). */
   faceStore: FaceStore;
+  /** Finds the cats and dogs in each Photo. */
+  animalDetector: AnimalDetector;
 };
 
 export type PhotoUpload = {
@@ -172,7 +175,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
   });
 
   // The Photo is decoded and turned upright once. A HEIC's full-size pixels make
-  // its preview; the same pixels, shrunk, are what Faces are found in.
+  // its preview; the same pixels, shrunk, are what Faces and Animals are found in.
   const uprightHeic = isHeic(photoMimeType)
     ? await decodeUprightHeic(photo.bytes, {
         exif: numericValue(tags, "EXIF:IFD0:Orientation"),
@@ -188,6 +191,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     summary: summarize(tags),
     sections,
     faces: await findFaces(config, photo.bytes, upright),
+    animals: upright ? await findAnimals(config, upright) : [],
   };
 }
 
@@ -197,7 +201,7 @@ const SHARP_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 /**
  * The upright Photo as RGB, shared by the face and pet pipelines. JPEG, PNG and
  * WebP go to sharp; a HEIC arrives already decoded. Undefined for TIFF and RAW,
- * which get no Faces, and for a Photo too damaged to decode, whose Warnings say why.
+ * which get no Faces or Animals, and for a Photo too damaged to decode, whose Warnings say why.
  */
 async function decodeUprightPhoto(
   mimeType: string,
@@ -223,6 +227,11 @@ async function findFaces(
   return faceStore.facesOfPhoto({ sha256, modelVersion: faceDetector.modelVersion }, async () =>
     (await faceDetector.detect({ kind: "raw", ...upright })).map(({ box, embedding }) => ({ box, embedding })),
   );
+}
+
+/** The Animals as the Analysis shows them: species and box, nothing stored yet. */
+async function findAnimals({ animalDetector }: AnalyzerConfig, upright: Pixels<3>): Promise<Animal[]> {
+  return (await animalDetector.detect(upright)).map(({ species, box }) => ({ species, box }));
 }
 
 /**
