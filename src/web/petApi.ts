@@ -1,6 +1,6 @@
 // The browser's side of the pet routes in src/server/pets/api.ts.
 import type { Animal, PetRef, PetSummary } from "../shared/analysis.ts";
-import { send } from "./faceApi.ts";
+import { send } from "./api.ts";
 
 export const petApi = {
   nameAnimal: async (animalId: string, name: string) =>

@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
 import { petStore } from "../pets/store.ts";
-import { heirsOf } from "./overlap.ts";
-import { cosine, embeddingOf, pairSet } from "./similarity.ts";
+import { heirsOf } from "../recognition/overlap.ts";
+import type { PhotoKey } from "../recognition/photo-key.ts";
+import { cosine, embeddingOf, pairSet } from "../recognition/similarity.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
@@ -62,9 +63,6 @@ const SCHEMA = `
 
 /** A Face as the detector found it, before it is stored. */
 export type NewFace = { box: Box; embedding: Float32Array };
-
-/** Which Photo, by the SHA-256 of its file, and which models read it. */
-export type PhotoKey = { sha256: string; modelVersion: string };
 
 export type FaceStore = ReturnType<typeof openFaceStore>;
 

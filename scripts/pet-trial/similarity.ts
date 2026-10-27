@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { exiftool } from "exiftool-vendored";
 import ort from "onnxruntime-node";
 import sharp, { type Sharp } from "sharp";
-import { cosine } from "../../src/server/faces/similarity.ts";
+import { cosine } from "../../src/server/recognition/similarity.ts";
 import type { Pixels } from "../../src/server/pixels.ts";
 import { decodeUprightHeic } from "../../src/server/preview.ts";
 

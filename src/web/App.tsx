@@ -13,7 +13,8 @@ import type {
   Summary,
   Warning,
 } from "../shared/analysis.ts";
-import { faceApi, messageOf } from "./faceApi.ts";
+import { messageOf } from "./api.ts";
+import { faceApi } from "./faceApi.ts";
 import { FaceBoxes, FacesSection } from "./faces.tsx";
 import { PeoplePanel, type NamedKind, type PeopleChange } from "./people.tsx";
 import { petApi } from "./petApi.ts";

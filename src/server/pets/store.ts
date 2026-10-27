@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { Animal, Box, PetRef, PetSummary, Species } from "../../shared/analysis.ts";
-import type { PhotoKey } from "../faces/store.ts";
-import { heirsOf } from "../faces/overlap.ts";
-import { cosine, embeddingOf, pairSet } from "../faces/similarity.ts";
+import type { PhotoKey } from "../recognition/photo-key.ts";
+import { heirsOf } from "../recognition/overlap.ts";
+import { cosine, embeddingOf, pairSet } from "../recognition/similarity.ts";
 import { SUGGESTION_THRESHOLD, UNKNOWN_PET_THRESHOLD } from "./thresholds.ts";
 
 /**

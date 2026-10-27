@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import type { PersonSummary, PetSummary } from "../shared/analysis.ts";
-import { faceApi, messageOf } from "./faceApi.ts";
+import { messageOf } from "./api.ts";
+import { faceApi } from "./faceApi.ts";
 import { petApi } from "./petApi.ts";
 
 /** A Person or a Pet, as the panel names them: the two are never mixed. */

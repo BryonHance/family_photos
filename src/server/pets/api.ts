@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { PetRef, PetSummary } from "../../shared/analysis.ts";
-import { fieldIn, nameIn } from "../faces/api.ts";
+import { fieldIn, nameIn } from "../recognition/request.ts";
 import type { PetStore } from "./store.ts";
 
 /**

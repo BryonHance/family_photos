@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { Face, PersonRef, PersonSummary, StrangerRef } from "../shared/analysis.ts";
-import { messageOf } from "./faceApi.ts";
+import { messageOf } from "./api.ts";
 
 /** Who a Face shows, as far as the viewer knows: exactly one of these. */
 type Who =

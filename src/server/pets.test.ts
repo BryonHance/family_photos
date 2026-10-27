@@ -7,7 +7,7 @@ import type { Analysis, Box } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import { openFaceStore } from "./faces/store.ts";
-import { cosine } from "./faces/similarity.ts";
+import { cosine } from "./recognition/similarity.ts";
 import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
 import { decodeUpright } from "./upright.ts";
 

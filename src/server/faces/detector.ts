@@ -7,7 +7,7 @@ import type { Box } from "../../shared/analysis.ts";
 import type { Pixels } from "../pixels.ts";
 import { decodeUpright, type PhotoPixels } from "../upright.ts";
 import { ALIGNED_SIZE, alignFace } from "./align.ts";
-import { iou } from "./overlap.ts";
+import { iou } from "../recognition/overlap.ts";
 
 /** A point in fractions of the upright Photo's width and height. */
 export type Point = { x: number; y: number };
