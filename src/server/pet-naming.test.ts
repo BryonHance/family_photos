@@ -80,6 +80,35 @@ describe("Pets", () => {
     expect(await api.renamePet(rex.id, "Max")).toEqual({ id: rex.id, name: "Max" });
     expect((await api.upload("person-and-dog.jpg")).faces[0]!.person?.name).toBe("Max");
   });
+
+  it("merges one Pet into another, moving its Animals and removing it", async () => {
+    const { cat } = await nameCatAndDog("Nellie", "Rex");
+    const [alone] = (await api.upload("cat.jpg")).animals;
+    const puppy = await api.nameAnimal(alone!.id, "Nellie (puppy)");
+
+    await api.mergePets(puppy.id, cat.id);
+
+    expect((await api.upload("cat.jpg")).animals.map((animal) => animal.pet)).toEqual([cat]);
+    expect(await reopenedNames()).toEqual(["Nellie", "Rex"]);
+    expect((await api.pets()).map(({ name, animalCount }) => [name, animalCount])).toEqual([
+      ["Nellie", 2],
+      ["Rex", 1],
+    ]);
+  });
+
+  it("refuses to merge a Pet into itself, an unknown Pet or a Person, or a Person into a Pet", async () => {
+    const { faces, animals } = await api.upload("person-and-dog.jpg");
+    const grandpa = await api.nameFace(faces[0]!.id, "Grandpa");
+    const rex = await api.nameAnimal(animals[0]!.id, "Rex");
+
+    expect((await api.call("POST", `/api/pets/${rex.id}/merge`, { into: rex.id })).status).toBe(400);
+    expect((await api.call("POST", `/api/pets/${rex.id}/merge`, {})).status).toBe(400);
+    expect((await api.call("POST", `/api/pets/${rex.id}/merge`, { into: "nobody" })).status).toBe(404);
+    expect((await api.call("POST", `/api/pets/${rex.id}/merge`, { into: grandpa.id })).status).toBe(404);
+    expect((await api.call("POST", `/api/people/${grandpa.id}/merge`, { into: rex.id })).status).toBe(404);
+    expect(await api.pets()).toEqual([{ id: rex.id, name: "Rex", animalCount: 1 }]);
+    expect(await api.people()).toEqual([{ id: grandpa.id, name: "Grandpa", faceCount: 1 }]);
+  });
 });
 
 describe("reopening a Photo", () => {

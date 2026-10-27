@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { PetRef, PetSummary } from "../../shared/analysis.ts";
-import { nameIn } from "../faces/api.ts";
+import { fieldIn, nameIn } from "../faces/api.ts";
 import type { PetStore } from "./store.ts";
 
 /**
@@ -36,6 +36,15 @@ export function petRoutes(store: PetStore) {
     if (result === "no-pet") return noSuchPet(c);
     if (result === "name-taken") return problem(c, 409, `A Pet is already called ${name}. Merge them instead.`);
     return c.json<PetRef>(result);
+  });
+
+  app.post("/pets/:id/merge", async (c) => {
+    const into = await fieldIn(c, "into");
+    if (typeof into !== "string") return problem(c, 400, "Say which Pet to merge into.");
+    const result = store.mergePets(c.req.param("id"), into);
+    if (result === "same-pet") return problem(c, 400, "A Pet cannot be merged into itself.");
+    if (result === "no-pet") return noSuchPet(c);
+    return c.body(null, 204);
   });
 
   return app;

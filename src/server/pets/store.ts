@@ -95,6 +95,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const insertPet = db.prepare("INSERT INTO pets (id, name) VALUES (?, ?)");
   const findPet = db.prepare("SELECT id, name FROM pets WHERE id = ?");
   const renamePet = db.prepare("UPDATE pets SET name = ? WHERE id = ?");
+  const movePetAnimals = db.prepare("UPDATE animals SET pet_id = ? WHERE pet_id = ?");
+  const deletePet = db.prepare("DELETE FROM pets WHERE id = ?");
   const listPets = db.prepare(`
     SELECT pets.id, pets.name, COUNT(animals.id) AS animalCount
     FROM pets LEFT JOIN animals ON animals.pet_id = pets.id
@@ -181,6 +183,20 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         if (holder && holder.id !== petId) return "name-taken";
         renamePet.run(name, petId);
         return { id: petId, name };
+      });
+    },
+
+    /**
+     * Names every Animal of `petId` as `intoPetId` instead, then deletes `petId`.
+     * Only Pets are looked at, so a Pet never merges into a Person.
+     */
+    mergePets(petId: string, intoPetId: string): "merged" | "no-pet" | "same-pet" {
+      if (petId === intoPetId) return "same-pet";
+      return transaction(() => {
+        if (!findPet.get(petId) || !findPet.get(intoPetId)) return "no-pet";
+        movePetAnimals.run(intoPetId, petId);
+        deletePet.run(petId);
+        return "merged";
       });
     },
 
