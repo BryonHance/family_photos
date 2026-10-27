@@ -146,7 +146,11 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   /**
    * Each unnamed Animal's Suggestion: the Pet of its nearest named Animal in
    * another Photo, at or above SUGGESTION_THRESHOLD, unless the user rejected
-   * that Pet for it. Species does not limit it.
+   * that Pet for it. Species does not limit it: the detector's species is a hint,
+   * not a fact about the Pet. A Pet already named in this Photo is not
+   * suggested, and no two Animals of one Photo are suggested as the same Pet:
+   * the better match wins, and the other Animal gets no Suggestion at all, never
+   * its next-best Pet.
    */
   function suggestionsFor(sha256: string): Map<string, PetRef> {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
@@ -154,13 +158,16 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     const unnamed = own.filter((animal) => animal.pet_id === null);
     const suggestions = new Map<string, PetRef>();
     if (modelVersion == null || unnamed.length === 0) return suggestions;
+    const namedHere = new Set(own.map((animal) => animal.pet_id));
     const named = (namedAnimals.all(modelVersion) as NamedRow[])
-      .filter((row) => row.photo_sha256 !== sha256)
+      .filter((row) => row.photo_sha256 !== sha256 && !namedHere.has(row.pet_id))
       .map((row) => ({ pet: { id: row.pet_id, name: row.pet_name }, embedding: embeddingOf(row.embedding) }));
     const rejected = pairSet(
       (rejectionsOfPhoto.all(sha256) as { animal_id: string; pet_id: string }[]).map((r) => [r.animal_id, r.pet_id] as const),
     );
 
+    // Each Animal's own best Pet first; only then are clashes settled.
+    const pairs: { animalId: string; pet: PetRef; score: number }[] = [];
     for (const animal of unnamed) {
       const embedding = embeddingOf(animal.embedding);
       let nearest: { pet: PetRef; score: number } | undefined;
@@ -169,7 +176,14 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         const score = cosine(embedding, candidate.embedding);
         if (score >= SUGGESTION_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { pet: candidate.pet, score };
       }
-      if (nearest) suggestions.set(animal.id, nearest.pet);
+      if (nearest) pairs.push({ animalId: animal.id, ...nearest });
+    }
+    // Two Animals wanting the same Pet: the better match wins, and the other gets no Suggestion.
+    const suggested = new Set<string>();
+    for (const { animalId, pet } of pairs.sort((a, b) => b.score - a.score)) {
+      if (suggested.has(pet.id)) continue;
+      suggestions.set(animalId, pet);
+      suggested.add(pet.id);
     }
     return suggestions;
   }

@@ -1,6 +1,7 @@
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import type { AnimalDetector } from "./pets/detector.ts";
 import { modelsDir, openFaceApi, type FaceApi } from "./testing/face-api.ts";
 
 // These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
@@ -29,6 +30,24 @@ afterEach(async () => {
 });
 
 const suggestedNames = (animals: { suggestion?: { name: string } }[]) => animals.map((animal) => animal.suggestion?.name);
+
+/**
+ * The real pet models finding a Photo's Animals and their species, standing in
+ * an embedding for each, left to right: `vectors[i]` maps axes to weights, made
+ * unit length. An Animal without one gets an axis of its own, unlike any other.
+ */
+const animalsWith = (...vectors: Record<number, number>[]): AnimalDetector => ({
+  modelVersion: api.animalDetector.modelVersion,
+  detect: async (image) => {
+    const animals = (await api.animalDetector.detect(image)).sort((a, b) => a.box.x - b.box.x);
+    return animals.map((animal, i) => {
+      const embedding = new Float32Array(768);
+      for (const [axis, weight] of Object.entries(vectors[i] ?? { [100 + i]: 1 })) embedding[Number(axis)] = weight;
+      const length = Math.hypot(...embedding);
+      return { ...animal, embedding: embedding.map((v) => v / length) };
+    });
+  },
+});
 
 describe("Suggestions", () => {
   it("suggests the Pet of a named Animal for the same pet in another Photo", async () => {
@@ -69,6 +88,59 @@ describe("Suggestions", () => {
     const [reopened] = (await api.upload("cat-and-dog.jpg")).animals;
     expect(reopened!.suggestion).toBeUndefined();
     expect(reopened!.pet).toBeUndefined();
+  });
+
+  it("never suggests two Animals of one Photo as the same Pet: the better match wins", async () => {
+    const [cat] = (await api.upload("cat.jpg", { animals: animalsWith({ 0: 1 }) })).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+
+    const animals = (await api.upload("cat-and-dog.jpg", { animals: animalsWith({ 0: 0.8, 1: 0.6 }, { 0: 0.9, 2: Math.sqrt(0.19) }) }))
+      .animals;
+
+    expect(animals.map((animal) => animal.suggestion)).toEqual([undefined, tom]);
+  });
+
+  it("leaves the Animal that loses a clash without a Suggestion, rather than its next-best Pet", async () => {
+    // Tom is axis 0 and Rex axis 1. Both Animals of the second Photo are nearest to Tom,
+    // the right-hand one less so; it is like Rex too, but less than like Tom.
+    const [cat] = (await api.upload("cat.jpg", { animals: animalsWith({ 0: 1 }) })).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    const [dog] = (await api.upload("dog.jpg", { animals: animalsWith({ 1: 1 }) })).animals;
+    await api.nameAnimal(dog!.id, "Rex");
+
+    const animals = (
+      await api.upload("cat-and-dog.jpg", {
+        animals: animalsWith({ 0: 0.9, 3: Math.sqrt(0.19) }, { 0: 0.75, 1: 0.66, 4: Math.sqrt(1 - 0.75 ** 2 - 0.66 ** 2) }),
+      })
+    ).animals;
+
+    expect(animals.map((animal) => animal.suggestion)).toEqual([tom, undefined]);
+    // It then follows the Unknown pet rule: alone in a new Unknown pet, it shows no label.
+    expect(animals[1]!.unknownPet).toBeUndefined();
+  });
+
+  it("does not suggest a Pet already named in the same Photo", async () => {
+    const [cat] = (await api.upload("cat.jpg", { animals: animalsWith({ 0: 1 }) })).animals;
+    await api.nameAnimal(cat!.id, "Tom");
+    const both = animalsWith({ 0: 0.9, 1: Math.sqrt(0.19) }, { 0: 0.8, 2: 0.6 });
+    const [left, right] = (await api.upload("cat-and-dog.jpg", { animals: both })).animals;
+
+    await api.nameAnimal(left!.id, "Tom");
+
+    const [, reopenedRight] = (await api.upload("cat-and-dog.jpg", { animals: both })).animals;
+    expect(reopenedRight!.id).toBe(right!.id);
+    expect(reopenedRight!.suggestion).toBeUndefined();
+  });
+
+  it("is not limited by species: a cat can be suggested a Pet first named on a dog", async () => {
+    const [dog] = (await api.upload("dog.jpg", { animals: animalsWith({ 0: 1 }) })).animals;
+    expect(dog!.species).toBe("dog");
+    const rex = await api.nameAnimal(dog!.id, "Rex");
+
+    const [cat] = (await api.upload("cat.jpg", { animals: animalsWith({ 0: 0.8, 1: 0.6 }) })).animals;
+
+    expect(cat!.species).toBe("cat");
+    expect(cat!.suggestion).toEqual(rex);
   });
 
   it("refuses to confirm or reject for an unknown Animal or Pet, or for a Person", async () => {
