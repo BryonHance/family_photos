@@ -1,13 +1,13 @@
-// The browser's side of the face routes in src/server/faces/api.ts.
+// The browser's side of the face routes in src/server/faces/api.ts. The pet routes are in petApi.ts.
 import type { Face, PersonRef, PersonSummary } from "../shared/analysis.ts";
 
-/** A face route refused the request; the message is the server's, ready to show. */
+/** A face or pet route refused the request; the message is the server's, ready to show. */
 export class FaceApiError extends Error {}
 
 /** What to show the user for a failed request. */
 export const messageOf = (failure: unknown): string => (failure instanceof Error ? failure.message : String(failure));
 
-async function send(method: string, url: string, body?: unknown): Promise<Response> {
+export async function send(method: string, url: string, body?: unknown): Promise<Response> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -40,5 +40,6 @@ export const faceApi = {
   mergePeople: async (personId: string, intoPersonId: string) =>
     void (await send("POST", `/api/people/${encodeURIComponent(personId)}/merge`, { into: intoPersonId })),
   deletePerson: async (personId: string) => void (await send("DELETE", `/api/people/${encodeURIComponent(personId)}`)),
-  deleteAllFaceData: async () => void (await send("DELETE", "/api/face-data")),
+  /** Face and pet data go together (ADR-0003). */
+  deleteAllFaceAndPetData: async () => void (await send("DELETE", "/api/face-and-pet-data")),
 };

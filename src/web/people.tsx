@@ -11,7 +11,7 @@ export type PeopleChange =
 
 /**
  * Every Person with their Face count, to rename, merge or delete, and "Delete
- * all face data". It shows no Photos: none are kept (ADR-0002).
+ * all face and pet data". It shows no Photos: none are kept (ADR-0002, ADR-0003).
  */
 export function PeoplePanel({
   people,
@@ -40,9 +40,9 @@ export function PeoplePanel({
 
   function deleteAll() {
     const confirmed = window.confirm(
-      "Delete all face data? Every name and every stored Face is forgotten, and each Photo must be opened again to name its Faces. This cannot be undone.",
+      "Delete all face and pet data? Every name and every stored Face and Animal is forgotten, and each Photo must be opened again to name its Faces and Animals. This cannot be undone.",
     );
-    if (confirmed) void change(async () => (await faceApi.deleteAllFaceData(), { kind: "deleted-all" }));
+    if (confirmed) void change(async () => (await faceApi.deleteAllFaceAndPetData(), { kind: "deleted-all" }));
   }
 
   return (
@@ -77,7 +77,7 @@ export function PeoplePanel({
             </p>
           )}
           <button type="button" className="danger" onClick={deleteAll}>
-            Delete all face data
+            Delete all face and pet data
           </button>
         </section>
       )}

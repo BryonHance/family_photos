@@ -2,10 +2,12 @@ import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } fr
 import type {
   Analysis,
   AnalyzeError,
+  Animal,
   Face,
   Field,
   PersonRef,
   PersonSummary,
+  PetSummary,
   Section,
   Summary,
   Warning,
@@ -13,6 +15,7 @@ import type {
 import { faceApi, messageOf } from "./faceApi.ts";
 import { FaceBoxes, FacesSection } from "./faces.tsx";
 import { PeoplePanel, type PeopleChange } from "./people.tsx";
+import { petApi } from "./petApi.ts";
 import { AnimalBoxes, PetsSection } from "./pets.tsx";
 
 type Opened = { analysis: Analysis; previewUrl: string };
@@ -36,6 +39,10 @@ export function App() {
   const [selectedFaceId, setSelectedFaceId] = useState<string>();
   // Every Person, for autocompleting names and for the People panel.
   const [people, setPeople] = useState<PersonSummary[]>([]);
+  // The Animal whose naming form is open, if any. At most one form is open, for a Face or an Animal.
+  const [selectedAnimalId, setSelectedAnimalId] = useState<string>();
+  // Every Pet, for autocompleting an Animal's name: Pets only, never People.
+  const [pets, setPets] = useState<PetSummary[]>([]);
 
   const previewUrl = state.status === "opened" ? state.previewUrl : undefined;
   useEffect(() => {
@@ -57,8 +64,42 @@ export function App() {
   }
 
   function selectFace(faceId: string) {
+    setSelectedAnimalId(undefined);
     setSelectedFaceId(faceId);
     void refreshPeople();
+  }
+
+  /** Changes the opened Photo's Animals in place, such as after one is named. */
+  function updateAnimals(update: (animals: Animal[]) => Animal[]) {
+    setState((s) => (s.status === "opened" ? { ...s, analysis: { ...s.analysis, animals: update(s.analysis.animals) } } : s));
+  }
+
+  async function refreshPets() {
+    try {
+      setPets(await petApi.pets());
+    } catch {
+      // Autocomplete keeps the last list it had.
+    }
+  }
+
+  function selectAnimal(animalId: string) {
+    setSelectedFaceId(undefined);
+    setSelectedAnimalId(animalId);
+    void refreshPets();
+  }
+
+  async function nameAnimal(animalId: string, name: string) {
+    const pet = await petApi.nameAnimal(animalId, name);
+    updateAnimals((animals) => animals.map((animal) => (animal.id === animalId ? { ...animal, pet } : animal)));
+    setSelectedAnimalId(undefined);
+    await refreshPets();
+  }
+
+  async function markNotAPet(animalId: string) {
+    await petApi.markNotAPet(animalId);
+    updateAnimals((animals) => animals.filter((animal) => animal.id !== animalId));
+    setSelectedAnimalId(undefined);
+    await refreshPets();
   }
 
   // Why the last ✓ or ✕ failed, if it did.
@@ -139,6 +180,11 @@ export function App() {
         };
       }),
     );
+    // Deleting all face data deletes all pet data too (ADR-0003).
+    if (change.kind === "deleted-all") {
+      updateAnimals((animals) => animals.map(({ pet: _forgotten, ...animal }) => animal));
+      void refreshPets();
+    }
     void refreshPeople();
   }
 
@@ -147,6 +193,7 @@ export function App() {
     const controller = new AbortController();
     request.current = controller;
     setSelectedFaceId(undefined);
+    setSelectedAnimalId(undefined);
     setSuggestionProblem(undefined);
     setState({ status: "analyzing", photoName: photo.name });
     let next: ViewerState;
@@ -195,6 +242,8 @@ export function App() {
             onSelectFace={selectFace}
             onConfirmSuggestion={confirmSuggestion}
             onRejectSuggestion={rejectSuggestion}
+            selectedAnimalId={selectedAnimalId}
+            onSelectAnimal={selectAnimal}
           />
         ) : (
           <p className="hint">Drop a Photo here</p>
@@ -253,6 +302,11 @@ export function App() {
                   toggle={
                     state.analysis.faces.length === 0 ? { showBoxes, onShowBoxesChange: setShowBoxes } : undefined
                   }
+                  selectedAnimalId={selectedAnimalId}
+                  pets={pets}
+                  onName={nameAnimal}
+                  onNotAPet={markNotAPet}
+                  onClose={() => setSelectedAnimalId(undefined)}
                 />
               )
             }
@@ -308,12 +362,16 @@ function PhotoPreview({
   onSelectFace,
   onConfirmSuggestion,
   onRejectSuggestion,
+  selectedAnimalId,
+  onSelectAnimal,
 }: Opened & {
   showBoxes: boolean;
   selectedFaceId: string | undefined;
   onSelectFace: (faceId: string) => void;
   onConfirmSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
   onRejectSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
+  selectedAnimalId: string | undefined;
+  onSelectAnimal: (animalId: string) => void;
 }) {
   const { preview, photo, faces, animals } = analysis;
   const framed = (src: string) => (
@@ -328,7 +386,9 @@ function PhotoPreview({
           onReject={onRejectSuggestion}
         />
       )}
-      {showBoxes && animals.length > 0 && <AnimalBoxes animals={animals} />}
+      {showBoxes && animals.length > 0 && (
+        <AnimalBoxes animals={animals} selectedAnimalId={selectedAnimalId} onSelect={onSelectAnimal} />
+      )}
     </div>
   );
   switch (preview.kind) {

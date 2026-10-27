@@ -187,14 +187,16 @@ export function FacesSection({
         </p>
       )}
       {selected ? (
-        <FaceForm
+        <NameForm
           // A fresh form for each Face, starting from its own name.
           key={selected.id}
-          face={selected}
-          number={index + 1}
-          people={people}
+          label={`Name Face ${index + 1}`}
+          initialName={selected.person?.name ?? ""}
+          names={people}
+          namesLabel="People"
+          dismissLabel="Not a face"
           onName={(name) => onName(selected.id, name)}
-          onNotAFace={() => onNotAFace(selected.id)}
+          onDismiss={() => onNotAFace(selected.id)}
           onClose={onClose}
         />
       ) : (
@@ -204,28 +206,37 @@ export function FacesSection({
   );
 }
 
-/** Names a Face, with names autocompleting from existing People, or marks it "Not a face". */
-function FaceForm({
-  face,
-  number,
-  people,
+/**
+ * Names a Face or an Animal, with names autocompleting from `names` (People for
+ * a Face, Pets for an Animal, never both), or dismisses it ("Not a face", "Not a pet").
+ */
+export function NameForm({
+  label,
+  initialName,
+  names,
+  namesLabel,
+  dismissLabel,
   onName,
-  onNotAFace,
+  onDismiss,
   onClose,
 }: {
-  face: Face;
-  number: number;
-  people: PersonSummary[];
+  /** The form's accessible name, such as "Name Face 3". */
+  label: string;
+  initialName: string;
+  names: { id: string; name: string }[];
+  /** The autocomplete list's accessible name: "People" or "Pets". */
+  namesLabel: string;
+  dismissLabel: string;
   onName: (name: string) => Promise<void>;
-  onNotAFace: () => Promise<void>;
+  onDismiss: () => Promise<void>;
   onClose: () => void;
 }) {
   const listId = useId();
-  const [name, setName] = useState(face.person?.name ?? "");
+  const [name, setName] = useState(initialName);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const needle = name.trim().toLowerCase();
-  const matches = needle === "" ? [] : people.filter((p) => p.name.toLowerCase().includes(needle));
+  const matches = needle === "" ? [] : names.filter((n) => n.name.toLowerCase().includes(needle));
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -246,7 +257,7 @@ function FaceForm({
   return (
     <form
       className="face-form"
-      aria-label={`Name Face ${number}`}
+      aria-label={label}
       onSubmit={(event) => {
         event.preventDefault();
         save(name);
@@ -267,10 +278,10 @@ function FaceForm({
         />
       </label>
       {matches.length > 0 && (
-        <ul role="listbox" id={listId} aria-label="People" className="name-options">
-          {matches.map((person) => (
-            <li key={person.id} role="option" aria-selected={false} onClick={() => save(person.name)}>
-              {person.name}
+        <ul role="listbox" id={listId} aria-label={namesLabel} className="name-options">
+          {matches.map((option) => (
+            <li key={option.id} role="option" aria-selected={false} onClick={() => save(option.name)}>
+              {option.name}
             </li>
           ))}
         </ul>
@@ -279,8 +290,8 @@ function FaceForm({
         <button type="submit" disabled={busy || needle === ""}>
           Save
         </button>
-        <button type="button" disabled={busy} onClick={() => void run(onNotAFace)}>
-          Not a face
+        <button type="button" disabled={busy} onClick={() => void run(onDismiss)}>
+          {dismissLabel}
         </button>
         <button type="button" disabled={busy} onClick={onClose}>
           Cancel

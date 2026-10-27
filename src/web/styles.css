@@ -43,8 +43,10 @@ body {
   list-style: none;
 }
 
+/* Above Animal boxes, so that a Face inside an Animal's box (a child hugging the dog) can still be clicked. */
 .face-box {
   position: absolute;
+  z-index: 1;
   box-sizing: border-box;
   border: 2px solid #facc15;
   border-radius: 2px;
@@ -106,7 +108,10 @@ body {
   background: #d4d4d4;
 }
 
-/* Animal boxes are cyan with rounded corners, apart from the yellow Face boxes, and labelled with the species. */
+/*
+ * Animal boxes are cyan with rounded corners, apart from the yellow Face boxes,
+ * and labelled with the species above and the Pet's name below.
+ */
 .animal-boxes {
   margin: 0;
   padding: 0;
@@ -119,10 +124,24 @@ body {
   border: 2px solid #22d3ee;
   border-radius: 8px;
   box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
-  pointer-events: none;
 }
 
-.animal-species {
+/* The whole box is the button that selects its Animal for naming. */
+.animal-box > button {
+  all: unset;
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.animal-box > button[aria-pressed="true"],
+.animal-box > button:focus-visible {
+  outline: 3px solid #fff;
+  border-radius: 8px;
+}
+
+.animal-species,
+.animal-name {
   position: absolute;
   top: -2px;
   left: 6px;
@@ -135,6 +154,14 @@ body {
   color: #000;
   background: #22d3ee;
   border-radius: 2px 2px 0 0;
+}
+
+.animal-name {
+  top: auto;
+  bottom: -2px;
+  transform: translateY(100%);
+  font-weight: 500;
+  border-radius: 0 0 2px 2px;
 }
 
 /* ✓ and ✕ sit above the box's top right corner, beside its number. */
@@ -179,11 +206,13 @@ body {
 }
 
 .faces > .hint,
+.pets > .hint,
 .face-form {
   flex-basis: 100%;
 }
 
-.faces > .hint {
+.faces > .hint,
+.pets > .hint {
   margin: 0 0 0.5rem;
   opacity: 0.7;
 }
