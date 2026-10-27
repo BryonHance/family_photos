@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ort from "onnxruntime-node";
 import sharp from "sharp";
@@ -7,6 +5,7 @@ import type { Box } from "../../shared/analysis.ts";
 import type { Pixels } from "../pixels.ts";
 import { decodeUpright, type PhotoPixels } from "../upright.ts";
 import { ALIGNED_SIZE, alignFace } from "./align.ts";
+import { verifyPinnedModels } from "../recognition/models.ts";
 import { iou } from "../recognition/overlap.ts";
 
 /** A point in fractions of the upright Photo's width and height. */
@@ -35,9 +34,6 @@ export type FaceDetector = {
   detect(photo: PhotoPixels): Promise<DetectedFace[]>;
 };
 
-/** A model file is missing or does not match its pinned SHA-256. */
-export class FaceModelError extends Error {}
-
 const DETECTOR_FILE = "det_500m.onnx";
 const RECOGNIZER_FILE = "w600k_mbf.onnx";
 /** Change it whenever the models or the alignment change, so that stored Photos are detected again. */
@@ -51,11 +47,11 @@ const NMS_IOU_THRESHOLD = 0.4;
 /**
  * Checks every buffalo_sc model file against its pinned SHA-256
  * (`models.sha256`, shared with `scripts/fetch-models.sh`), then loads the
- * detector and the recognizer to run on the CPU. Throws a FaceModelError naming
+ * detector and the recognizer to run on the CPU. Throws a ModelError naming
  * `pixi run models` when a file is missing or corrupt.
  */
 export async function loadFaceDetector(modelsDir: string): Promise<FaceDetector> {
-  await verifyModels(modelsDir);
+  await verifyPinnedModels("Face", join(import.meta.dirname, "models.sha256"), modelsDir);
   const load = (file: string) => ort.InferenceSession.create(join(modelsDir, file), { executionProviders: ["cpu"] });
   const detector = await load(DETECTOR_FILE);
   const recognizer = await load(RECOGNIZER_FILE);
@@ -74,25 +70,6 @@ export async function loadFaceDetector(modelsDir: string): Promise<FaceDetector>
       return faces;
     },
   };
-}
-
-async function verifyModels(modelsDir: string) {
-  const list = await readFile(join(import.meta.dirname, "models.sha256"), "utf8");
-  for (const line of list.split("\n").filter((l) => l.trim() !== "")) {
-    const [expected, name] = line.trim().split(/\s+/) as [string, string];
-    const path = join(modelsDir, name);
-    let bytes: Buffer;
-    try {
-      bytes = await readFile(path);
-    } catch {
-      throw new FaceModelError(`Face model ${path} is missing. Run \`pixi run models\` to download it.`);
-    }
-    if (createHash("sha256").update(bytes).digest("hex") !== expected) {
-      throw new FaceModelError(
-        `Face model ${path} does not match its pinned SHA-256. Run \`pixi run models\` to download it again.`,
-      );
-    }
-  }
 }
 
 /** The Faces' boxes and landmarks, ordered left to right, before they are embedded. */

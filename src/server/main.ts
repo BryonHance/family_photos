@@ -4,10 +4,11 @@ import { dirname, join } from "node:path";
 import { serve } from "@hono/node-server";
 import { exiftool } from "exiftool-vendored";
 import { createApp } from "./app.ts";
-import { FaceModelError, loadFaceDetector } from "./faces/detector.ts";
+import { loadFaceDetector } from "./faces/detector.ts";
 import { openFaceStore } from "./faces/store.ts";
-import { loadAnimalDetector, PetModelError } from "./pets/detector.ts";
+import { loadAnimalDetector } from "./pets/detector.ts";
 import { createProductionApp } from "./production.ts";
+import { ModelError } from "./recognition/models.ts";
 
 const port = Number(process.env.PORT ?? 3000);
 // The face and pet models, fetched by `pixi run models` in development and built into the Docker image.
@@ -20,7 +21,7 @@ try {
   faceDetector = await loadFaceDetector(modelsDir);
   animalDetector = await loadAnimalDetector(modelsDir);
 } catch (error) {
-  if (!(error instanceof FaceModelError || error instanceof PetModelError)) throw error;
+  if (!(error instanceof ModelError)) throw error;
   console.error(error.message);
   process.exit(1);
 }

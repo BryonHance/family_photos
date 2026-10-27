@@ -1,11 +1,9 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ort from "onnxruntime-node";
 import sharp from "sharp";
 import type { Box, Species } from "../../shared/analysis.ts";
 import type { Pixels } from "../pixels.ts";
+import { verifyExportedModel, verifyPinnedModels } from "../recognition/models.ts";
 
 export type DetectedAnimal = {
   species: Species;
@@ -25,9 +23,6 @@ export type AnimalDetector = {
   /** The cats and dogs in the upright Photo, ordered left to right, each embedded. */
   detect(image: Pixels<3>): Promise<DetectedAnimal[]>;
 };
-
-/** A pet model file is missing or does not match its pinned SHA-256. */
-export class PetModelError extends Error {}
 
 /** The pet models sit in their own directory beside the face models. */
 const PET_MODELS_SUBDIR = "pets";
@@ -55,11 +50,12 @@ const SCORE_THRESHOLD = 0.5;
  * Checks every downloaded pet model file against its pinned SHA-256
  * (`models.sha256`, shared with `scripts/fetch-pet-models.sh`) and the exported
  * Avito model against the SHA-256 recorded beside it, then loads D-FINE-S and
- * the Avito model to run on the CPU. Throws a PetModelError naming `pixi run models` when a file is missing or corrupt.
+ * the Avito model to run on the CPU. Throws a ModelError naming `pixi run models` when a file is missing or corrupt.
  */
 export async function loadAnimalDetector(modelsDir: string): Promise<AnimalDetector> {
   const petModelsDir = join(modelsDir, PET_MODELS_SUBDIR);
-  await verifyModels(petModelsDir);
+  await verifyPinnedModels("Pet", join(import.meta.dirname, "models.sha256"), petModelsDir);
+  await verifyExportedModel("Pet", join(petModelsDir, EMBEDDING_FILE));
   const load = (file: string) =>
     ort.InferenceSession.create(join(petModelsDir, file), {
       executionProviders: ["cpu"],
@@ -78,52 +74,6 @@ export async function loadAnimalDetector(modelsDir: string): Promise<AnimalDetec
       return animals;
     },
   };
-}
-
-async function verifyModels(petModelsDir: string) {
-  const list = await readFile(join(import.meta.dirname, "models.sha256"), "utf8");
-  for (const line of list.split("\n").filter((l) => l.trim() !== "")) {
-    const [expected, name] = line.trim().split(/\s+/) as [string, string];
-    const path = join(petModelsDir, name);
-    const actual = await sha256(path);
-    if (actual === undefined) {
-      throw new PetModelError(`Pet model ${path} is missing. Run \`pixi run models\` to download it.`);
-    }
-    if (actual !== expected) {
-      throw new PetModelError(
-        `Pet model ${path} does not match its pinned SHA-256. Run \`pixi run models\` to download it again.`,
-      );
-    }
-  }
-
-  const path = join(petModelsDir, EMBEDDING_FILE);
-  // Recorded in sha256sum's format, so that `sha256sum --check` reads it too.
-  const recorded = await readFile(`${path}.sha256`, "utf8").then(
-    (text) => text.trim().split(/\s+/)[0],
-    () => undefined,
-  );
-  const actual = recorded === undefined ? undefined : await sha256(path);
-  if (actual === undefined) {
-    throw new PetModelError(
-      `Pet model ${path} or its recorded SHA-256 is missing. Run \`pixi run models\` to export it.`,
-    );
-  }
-  if (actual !== recorded) {
-    throw new PetModelError(
-      `Pet model ${path} does not match its recorded SHA-256. Run \`pixi run models\` to export it again.`,
-    );
-  }
-}
-
-/** Hashes a file as a stream (the Avito model is 1.2 GB), or undefined if it is missing. */
-async function sha256(path: string): Promise<string | undefined> {
-  const hash = createHash("sha256");
-  try {
-    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-  } catch {
-    return undefined;
-  }
-  return hash.digest("hex");
 }
 
 /**
