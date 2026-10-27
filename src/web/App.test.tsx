@@ -785,7 +785,7 @@ const petRow = (panel: HTMLElement, name: string) =>
     .getAllByRole("listitem")
     .find((row) => within(row).queryByText(name, { selector: ".name-row-name" }))!;
 
-it("lists People with their Face counts in the People panel, even before a Photo is opened", async () => {
+it("lists People with their Face counts in the People and pets panel, even before a Photo is opened", async () => {
   fakeFaceServer(crew, crewPeople());
   render(<App />);
 
@@ -848,7 +848,7 @@ it("deletes a Person after a confirmation, leaving their Faces unnamed, and does
   await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".name-row-name" })).not.toBeInTheDocument());
 });
 
-it('deletes all face and pet data after a confirmation, emptying the People panel and unnaming the Animals', async () => {
+it('deletes all face and pet data after a confirmation, emptying the People and pets panel and unnaming the Animals', async () => {
   const server = fakeFaceServer(crewWithPets, crewPeople(), [{ id: "rex", name: "Rex", animalCount: 1 }]);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();

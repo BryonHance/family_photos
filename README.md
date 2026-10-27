@@ -40,7 +40,7 @@ The same file holds pet data, with the same protection (ADR-0003): each Animal's
 
 - In Docker, `faces.db` lives in the named volume `face-data`, mounted at `/app/data`. In development it is `data/faces.db`, which git ignores. Set `FACES_DB` to put it elsewhere.
 - **Keep the `face-data` volume out of every backup that leaves the server**, such as cloud or off-site backups. If the server is lost, open the Photos again to name each Person and Pet again.
-- "Delete all face and pet data" in the People panel empties the file. Removing the volume (`docker compose down` then `docker volume rm family_photos_face-data`, or whatever name `docker volume ls` shows) also deletes it.
+- "Delete all face and pet data" in the People and pets panel empties the file. Removing the volume (`docker compose down` then `docker volume rm family_photos_face-data`, or whatever name `docker volume ls` shows) also deletes it.
 
 ### Tuning Suggestions and Strangers
 

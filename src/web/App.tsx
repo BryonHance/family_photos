@@ -37,11 +37,11 @@ export function App() {
   const request = useRef<AbortController | null>(null);
   // The Face whose naming form is open, if any.
   const [selectedFaceId, setSelectedFaceId] = useState<string>();
-  // Every Person, for autocompleting names and for the People panel.
+  // Every Person, for autocompleting names and for the People and pets panel.
   const [people, setPeople] = useState<PersonSummary[]>([]);
   // The Animal whose naming form is open, if any. At most one form is open, for a Face or an Animal.
   const [selectedAnimalId, setSelectedAnimalId] = useState<string>();
-  // Every Pet, for autocompleting an Animal's name: Pets only, never People.
+  // Every Pet, for autocompleting an Animal's name (Pets only, never People) and for the People and pets panel.
   const [pets, setPets] = useState<PetSummary[]>([]);
 
   const previewUrl = state.status === "opened" ? state.previewUrl : undefined;

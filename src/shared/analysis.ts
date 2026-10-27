@@ -78,10 +78,10 @@ export type Animal = {
   pet?: PetRef;
 };
 
-/** A Pet as the panel lists them. */
+/** A Pet as the People and pets panel lists them. */
 export type PetSummary = PetRef & { animalCount: number };
 
-/** A Person as the People panel lists them. */
+/** A Person as the People and pets panel lists them. */
 export type PersonSummary = PersonRef & { faceCount: number };
 
 export type Analysis = {
