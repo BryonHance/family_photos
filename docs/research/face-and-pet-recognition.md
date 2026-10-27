@@ -239,4 +239,4 @@ A 4-Photo smoke test on the same machine measured D-FINE-S at 187–277 ms, so e
 5. **MiewID licence:** ask Wild Me / Conservation X Labs. It is the strongest frozen model on dogs in the 2026 comparison.
 6. **Non-COCO pets** (rabbits, tortoises, hamsters): do we need them? If so, OWLv2 or an Objects365 detector is needed, at roughly 10× the size.
 7. **Does SCRFD-500MF fire on our pets' faces?** If it often does, handle the Face-inside-pet-box overlap (§7) in the first version.
-8. **Domain terms and ADR:** settle Animal/Pet/Stranger naming and the ADR-0002-vs-ADR-0003 choice before implementation.
+8. ~~**Domain terms and ADR**~~ **Settled:** `GLOSSARY.md` adds Animal, Pet and Unknown pet and widens Suggestion. ADR-0003 keeps pet data under the same protection as face data.
