@@ -13,8 +13,26 @@ typecheck = { cmd = "pnpm run typecheck", depends-on = ["install"] }
 build = { cmd = "pnpm run build", depends-on = ["install"] }
 models = "bash scripts/fetch-models.sh"
 similarity = { cmd = "pnpm exec tsx scripts/face-similarity.ts", depends-on = ["install"] }
+pet-models = "bash scripts/pet-trial/fetch-models.sh"
+pet-trial = { cmd = "pnpm exec tsx scripts/pet-trial/similarity.ts", depends-on = ["install"] }
 
 [dependencies]
 pnpm = ">=12.4.1,<13"
 typescript = ">=6.0.2,<7"
 nodejs = ">=26.12.1,<26.13"
+
+# The pet trial run (scripts/pet-trial/): a separate environment, so PyTorch
+# never enters the app's. Used once to export the Avito CLIP-L vision tower to ONNX.
+[feature.pet-export.dependencies]
+python = "3.12.*"
+pytorch-cpu = "*"
+transformers = "*"
+onnx = "*"
+safetensors = "*"
+onnxruntime = "*"
+
+[feature.pet-export.tasks]
+pet-export = "python scripts/pet-trial/export-avito.py"
+
+[environments]
+pet-export = { features = ["pet-export"], no-default-feature = true }
