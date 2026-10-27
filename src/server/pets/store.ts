@@ -82,7 +82,13 @@ type EmbeddingRow = {
   pet_id: string | null;
   unknown_pet_id: number | null;
 };
-type NamedRow = { photo_sha256: string; embedding: Uint8Array; pet_id: string; pet_name: string };
+type NamedRow = {
+  photo_sha256: string;
+  embedding: Uint8Array;
+  pet_id: string;
+  unknown_pet_id: number | null;
+  pet_name: string;
+};
 
 type AnimalRow = {
   id: string;
@@ -144,7 +150,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     ORDER BY pets.name`);
   // Every named Animal's embedding, for Suggestions: a plain scan, never mixed with Faces (spec #20).
   const namedAnimals = db.prepare(`
-    SELECT photo_sha256, embedding, pet_id, pets.name AS pet_name
+    SELECT photo_sha256, embedding, pet_id, unknown_pet_id, pets.name AS pet_name
     FROM animals JOIN pets ON pets.id = animals.pet_id
     WHERE model_version = ?`);
   const embeddingsOfPhoto = db.prepare(
@@ -154,6 +160,19 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const unknownPetMembers = db.prepare(`
     SELECT photo_sha256, embedding, unknown_pet_id FROM animals
     WHERE unknown_pet_id IS NOT NULL AND pet_id IS NULL AND model_version = ?`);
+  // For each Animal of a Photo, the Unknown pets it must not join: those with an
+  // Animal named as a Pet it rejected.
+  const barredUnknownPets = db.prepare(`
+    SELECT rejected_pet_suggestions.animal_id, named.unknown_pet_id
+    FROM rejected_pet_suggestions
+    JOIN animals AS animal ON animal.id = rejected_pet_suggestions.animal_id
+    JOIN animals AS named ON named.pet_id = rejected_pet_suggestions.pet_id
+    WHERE animal.photo_sha256 = ? AND named.unknown_pet_id IS NOT NULL`);
+  const photosOfPet = db.prepare("SELECT DISTINCT photo_sha256 FROM animals WHERE pet_id = ?");
+  const leaveUnknownPets = db.prepare("UPDATE animals SET unknown_pet_id = NULL WHERE pet_id = ?");
+  const leaveUnknownPetOfPet = db.prepare(`
+    UPDATE animals SET unknown_pet_id = NULL
+    WHERE id = ?1 AND unknown_pet_id IN (SELECT unknown_pet_id FROM animals WHERE pet_id = ?2)`);
   const newUnknownPet = db.prepare("INSERT INTO unknown_pets DEFAULT VALUES");
   const setUnknownPetOfAnimal = db.prepare("UPDATE animals SET unknown_pet_id = ? WHERE id = ?");
   const deleteEmptyUnknownPets = db.prepare(
@@ -191,13 +210,19 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
    * pet: it joins the Unknown pet of its most similar unnamed Animal in another
    * Photo, at or above UNKNOWN_PET_THRESHOLD, or starts a new one. Each Animal
    * chooses on its own, so two Animals of one Photo may join the same Unknown
-   * pet. Unknown pets never merge. True when any Animal was placed.
+   * pet. An Animal never joins an Unknown pet with an Animal named as a Pet it
+   * rejected. Unknown pets never merge. True when any Animal was placed.
    */
   function joinUnknownPets(sha256: string, suggestions: Map<string, PetRef>): boolean {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
     const waiting = own.filter((a) => a.pet_id === null && a.unknown_pet_id === null && !suggestions.has(a.id));
     const modelVersion = waiting[0]?.model_version;
     if (modelVersion == null) return false;
+    const barred = pairSet(
+      (barredUnknownPets.all(sha256) as { animal_id: string; unknown_pet_id: number }[]).map(
+        (r) => [r.animal_id, r.unknown_pet_id] as const,
+      ),
+    );
     const members = (
       unknownPetMembers.all(modelVersion) as { photo_sha256: string; embedding: Uint8Array; unknown_pet_id: number }[]
     )
@@ -208,6 +233,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       const embedding = embeddingOf(animal.embedding);
       let nearest: { unknownPetId: number; score: number } | undefined;
       for (const member of members) {
+        if (barred.has(animal.id, member.unknownPetId)) continue;
         const score = cosine(embedding, member.embedding);
         if (score >= UNKNOWN_PET_THRESHOLD && score > (nearest?.score ?? -Infinity)) {
           nearest = { unknownPetId: member.unknownPetId, score };
@@ -220,7 +246,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
 
   /**
    * Each unnamed Animal's Suggestion: the Pet of its nearest named Animal in
-   * another Photo, at or above SUGGESTION_THRESHOLD, unless the user rejected
+   * another Photo, at or above SUGGESTION_THRESHOLD, or the Pet of a named
+   * Animal of its Unknown pet however alike they are; unless the user rejected
    * that Pet for it. Species does not limit it: the detector's species is a hint,
    * not a fact about the Pet. A Pet already named in this Photo is not
    * suggested, and no two Animals of one Photo are suggested as the same Pet:
@@ -236,7 +263,11 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     const namedHere = new Set(own.map((animal) => animal.pet_id));
     const named = (namedAnimals.all(modelVersion) as NamedRow[])
       .filter((row) => row.photo_sha256 !== sha256 && !namedHere.has(row.pet_id))
-      .map((row) => ({ pet: { id: row.pet_id, name: row.pet_name }, embedding: embeddingOf(row.embedding) }));
+      .map((row) => ({
+        pet: { id: row.pet_id, name: row.pet_name },
+        unknownPetId: row.unknown_pet_id,
+        embedding: embeddingOf(row.embedding),
+      }));
     const rejected = pairSet(
       (rejectionsOfPhoto.all(sha256) as { animal_id: string; pet_id: string }[]).map((r) => [r.animal_id, r.pet_id] as const),
     );
@@ -245,13 +276,21 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     const pairs: { animalId: string; pet: PetRef; score: number }[] = [];
     for (const animal of unnamed) {
       const embedding = embeddingOf(animal.embedding);
-      let nearest: { pet: PetRef; score: number } | undefined;
+      const best = new Map<string, { pet: PetRef; score: number; sameUnknownPet: boolean }>();
       for (const candidate of named) {
         if (rejected.has(animal.id, candidate.pet.id)) continue;
         const score = cosine(embedding, candidate.embedding);
-        if (score >= SUGGESTION_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { pet: candidate.pet, score };
+        const sameUnknownPet = animal.unknown_pet_id !== null && candidate.unknownPetId === animal.unknown_pet_id;
+        const known = best.get(candidate.pet.id);
+        best.set(candidate.pet.id, {
+          pet: candidate.pet,
+          score: Math.max(score, known?.score ?? -Infinity),
+          sameUnknownPet: sameUnknownPet || (known?.sameUnknownPet ?? false),
+        });
       }
-      if (nearest) pairs.push({ animalId: animal.id, ...nearest });
+      const qualifying = [...best.values()].filter((b) => b.sameUnknownPet || b.score >= SUGGESTION_THRESHOLD);
+      const nearest = qualifying.sort((a, b) => b.score - a.score)[0];
+      if (nearest) pairs.push({ animalId: animal.id, pet: nearest.pet, score: nearest.score });
     }
     // Two Animals wanting the same Pet: the better match wins, and the other gets no Suggestion.
     const suggested = new Set<string>();
@@ -345,6 +384,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         if (!photo) return "no-animal";
         if (!findPet.get(petId)) return "no-pet";
         rejectSuggestion.run(animalId, petId);
+        // Out of an Unknown pet that has an Animal named as this Pet; it then joins another by the usual rule.
+        if (leaveUnknownPetOfPet.run(animalId, petId).changes > 0) deleteEmptyUnknownPets.run();
         return present(photo.photo_sha256).find((animal) => animal.id === animalId)!;
       });
     },
@@ -390,8 +431,20 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       });
     },
 
-    /** Deletes a Pet; its Animals stay stored, unnamed. False when there is no such Pet. */
-    deletePet: (petId: string): boolean => transaction(() => deletePet.run(petId).changes > 0),
+    /**
+     * Deletes a Pet; its Animals stay stored, unnamed, and join Unknown pets
+     * again by the usual rule. False when there is no such Pet.
+     */
+    deletePet(petId: string): boolean {
+      return transaction(() => {
+        const photos = photosOfPet.all(petId) as { photo_sha256: string }[];
+        leaveUnknownPets.run(petId);
+        if (deletePet.run(petId).changes === 0) return false;
+        deleteEmptyUnknownPets.run();
+        for (const { photo_sha256 } of photos) present(photo_sha256);
+        return true;
+      });
+    },
 
     /** Deletes every Animal, Pet and Unknown pet. Call it inside the face store's transaction. */
     deleteAllRows() {

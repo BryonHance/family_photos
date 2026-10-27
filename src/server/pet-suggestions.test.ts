@@ -192,4 +192,101 @@ describe("Unknown pets", () => {
     expect(after).toMatch(/^Unknown pet \d+, in 2 Photos$/);
     expect(before).not.toContain(after);
   });
+
+  it("lets two Animals of one Photo join the same Unknown pet, each the one of its most similar Animal", async () => {
+    await api.upload("cat.jpg", { animals: animalsWith({ 0: 1 }) });
+
+    const both = (
+      await api.upload("cat-and-dog.jpg", { animals: animalsWith({ 0: 0.9, 1: Math.sqrt(0.19) }, { 0: 0.8, 2: 0.6 }) })
+    ).animals;
+
+    expect(unknownPetLabels(both)).toEqual([
+      expect.stringMatching(/^Unknown pet \d+, in 2 Photos$/),
+      expect.stringMatching(/^Unknown pet \d+, in 2 Photos$/),
+    ]);
+    expect(both[1]!.unknownPet).toEqual(both[0]!.unknownPet);
+  });
+
+  it("the Animals of a deleted Pet join an Unknown pet again, under a number never used before", async () => {
+    await api.upload("cat.jpg");
+    const [before] = (await api.upload("cat-and-dog.jpg")).animals;
+    const usedLabel = before!.unknownPet!.label;
+    const [cat] = (await api.upload("cat.jpg")).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    await api.confirmPetSuggestion(before!.id, tom.id);
+
+    await api.deletePet(tom.id);
+
+    const [alone] = (await api.upload("cat.jpg")).animals;
+    const [beside] = (await api.upload("cat-and-dog.jpg")).animals;
+    expect(alone!.pet).toBeUndefined();
+    expect(alone!.unknownPet).toEqual(beside!.unknownPet);
+    expect(alone!.unknownPet?.photoCount).toBe(2);
+    expect(alone!.unknownPet?.label).not.toBe(usedLabel);
+  });
+
+  it("an Unknown pet left with Animals in one Photo shows no label", async () => {
+    await api.upload("cat.jpg");
+    const [cat] = (await api.upload("cat-and-dog.jpg")).animals;
+
+    await api.markNotAPet(cat!.id);
+
+    expect(unknownPetLabels((await api.upload("cat.jpg")).animals)).toEqual([undefined]);
+  });
+
+  describe("a chain of look-alikes", () => {
+    /**
+     * The real pet models finding the Animal of a Photo, standing in an
+     * embedding `degrees` round a circle: Animals 40° apart are alike (cosine
+     * 0.77), Animals 80° apart are not (0.17). The fixtures' real Animals are
+     * either near-identical or wholly unlike, so they cannot make a chain.
+     */
+    const firstAnimalAt = (degrees: number): AnimalDetector => ({
+      modelVersion: api.animalDetector.modelVersion,
+      detect: async (image) => {
+        const [animal] = await api.animalDetector.detect(image);
+        const embedding = new Float32Array(768);
+        embedding[0] = Math.cos((degrees * Math.PI) / 180);
+        embedding[1] = Math.sin((degrees * Math.PI) / 180);
+        return [{ ...animal!, embedding }];
+      },
+    });
+
+    /** Three Photos, one Animal each: A is like B, B is like C, A is not like C. */
+    async function uploadChain() {
+      const [a] = (await api.upload("cat.jpg", { animals: firstAnimalAt(0) })).animals;
+      const [b] = (await api.upload("dog.jpg", { animals: firstAnimalAt(40) })).animals;
+      const [c] = (await api.upload("person-and-dog.jpg", { animals: firstAnimalAt(80) })).animals;
+      return { a: a!, b: b!, c: c! };
+    }
+    const reopen = async (fixtureName: string) => (await api.upload(fixtureName)).animals[0]!;
+
+    it("is one Unknown pet", async () => {
+      const { c } = await uploadChain();
+
+      expect(c.unknownPet?.photoCount).toBe(3);
+      expect((await reopen("cat.jpg")).unknownPet).toEqual(c.unknownPet);
+    });
+
+    it("naming one Animal of an Unknown pet suggests that Pet for the rest, even the unlike ones", async () => {
+      const { a } = await uploadChain();
+
+      const tom = await api.nameAnimal(a.id, "Tom");
+
+      expect((await reopen("dog.jpg")).suggestion).toEqual(tom);
+      expect((await reopen("person-and-dog.jpg")).suggestion).toEqual(tom);
+    });
+
+    it("rejecting that Suggestion takes the Animal out of the Unknown pet", async () => {
+      const { a, c } = await uploadChain();
+      const tom = await api.nameAnimal(a.id, "Tom");
+
+      const afterRejecting = await api.rejectPetSuggestion(c.id, tom.id);
+
+      // Still in the Unknown pet, it would show "in 2 Photos" (B and C); alone, it shows no label.
+      expect(afterRejecting).toEqual({ id: c.id, species: c.species, box: c.box });
+      expect(await reopen("person-and-dog.jpg")).toEqual(afterRejecting);
+      expect((await reopen("dog.jpg")).suggestion).toEqual(tom);
+    });
+  });
 });
