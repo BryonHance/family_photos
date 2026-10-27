@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Animal, Box, PetRef, PetSummary, Species } from "../../shared/analysis.ts";
 import type { PhotoKey } from "../faces/store.ts";
 import { heirsOf } from "../faces/overlap.ts";
-import { cosine, embeddingOf } from "../faces/similarity.ts";
+import { cosine, embeddingOf, pairSet } from "../faces/similarity.ts";
 import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
@@ -43,6 +43,11 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS animals_by_photo ON animals (photo_sha256);
   CREATE INDEX IF NOT EXISTS animals_by_pet ON animals (pet_id);
+  CREATE TABLE IF NOT EXISTS rejected_pet_suggestions (
+    animal_id TEXT NOT NULL REFERENCES animals (id) ON DELETE CASCADE,
+    pet_id    TEXT NOT NULL REFERENCES pets (id) ON DELETE CASCADE,
+    PRIMARY KEY (animal_id, pet_id)
+  );
   CREATE TABLE IF NOT EXISTS animal_photos (
     sha256        TEXT PRIMARY KEY,
     model_version TEXT NOT NULL
@@ -116,6 +121,12 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const embeddingsOfPhoto = db.prepare(
     "SELECT id, embedding, model_version, pet_id FROM animals WHERE photo_sha256 = ? AND embedding IS NOT NULL",
   );
+  const rejectionsOfPhoto = db.prepare(`
+    SELECT animal_id, rejected_pet_suggestions.pet_id
+    FROM rejected_pet_suggestions JOIN animals ON animals.id = rejected_pet_suggestions.animal_id
+    WHERE photo_sha256 = ?`);
+  const rejectSuggestion = db.prepare("INSERT OR IGNORE INTO rejected_pet_suggestions (animal_id, pet_id) VALUES (?, ?)");
+  const photoOfAnimal = db.prepare("SELECT photo_sha256 FROM animals WHERE id = ? AND not_a_pet = 0");
 
   const modelVersionOfPhoto = db.prepare("SELECT model_version FROM animal_photos WHERE sha256 = ?");
   const setModelVersionOfPhoto = db.prepare("INSERT OR REPLACE INTO animal_photos (sha256, model_version) VALUES (?, ?)");
@@ -133,7 +144,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
 
   /**
    * Each unnamed Animal's Suggestion: the Pet of its nearest named Animal in
-   * another Photo, at or above SUGGESTION_THRESHOLD. Species does not limit it.
+   * another Photo, at or above SUGGESTION_THRESHOLD, unless the user rejected
+   * that Pet for it. Species does not limit it.
    */
   function suggestionsFor(sha256: string): Map<string, PetRef> {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
@@ -144,11 +156,15 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     const named = (namedAnimals.all(modelVersion) as NamedRow[])
       .filter((row) => row.photo_sha256 !== sha256)
       .map((row) => ({ pet: { id: row.pet_id, name: row.pet_name }, embedding: embeddingOf(row.embedding) }));
+    const rejected = pairSet(
+      (rejectionsOfPhoto.all(sha256) as { animal_id: string; pet_id: string }[]).map((r) => [r.animal_id, r.pet_id] as const),
+    );
 
     for (const animal of unnamed) {
       const embedding = embeddingOf(animal.embedding);
       let nearest: { pet: PetRef; score: number } | undefined;
       for (const candidate of named) {
+        if (rejected.has(animal.id, candidate.pet.id)) continue;
         const score = cosine(embedding, candidate.embedding);
         if (score >= SUGGESTION_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { pet: candidate.pet, score };
       }
@@ -212,8 +228,33 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       });
     },
 
+    /** Names an Animal as the Pet it was suggested as. Only Pets are looked at, never People. */
+    confirmSuggestion(animalId: string, petId: string): PetRef | "no-animal" | "no-pet" {
+      return transaction(() => {
+        if (!photoOfAnimal.get(animalId)) return "no-animal";
+        const pet = findPet.get(petId) as PetRef | undefined;
+        if (!pet) return "no-pet";
+        setPetOfAnimal.run(pet.id, animalId);
+        return { id: pet.id, name: pet.name };
+      });
+    },
+
     /**
-     * Marks an Animal "Not a pet": it keeps only its box and the Photo's hash,
+     * Remembers that an Animal is not this Pet, so it is never suggested for it
+     * again. Returns the Animal as it now stands.
+     */
+    rejectSuggestion(animalId: string, petId: string): Animal | "no-animal" | "no-pet" {
+      return transaction(() => {
+        const photo = photoOfAnimal.get(animalId) as { photo_sha256: string } | undefined;
+        if (!photo) return "no-animal";
+        if (!findPet.get(petId)) return "no-pet";
+        rejectSuggestion.run(animalId, petId);
+        return present(photo.photo_sha256).find((animal) => animal.id === animalId)!;
+      });
+    },
+
+    /**
+     * Marks an Animal "Not a pet":it keeps only its box and the Photo's hash,
      * and stays hidden whenever the Photo is reopened. False when there is no such Animal.
      */
     markNotAPet: (animalId: string): boolean => transaction(() => markNotAPet.run(animalId).changes > 0),

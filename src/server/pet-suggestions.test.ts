@@ -41,4 +41,49 @@ describe("Suggestions", () => {
     expect(animals[0]!.pet).toBeUndefined();
     expect(suggestedNames(animals)).toEqual(["Tom", undefined]);
   });
+
+  it("confirming a Suggestion names the Animal", async () => {
+    const [cat] = (await api.upload("cat.jpg")).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    const [suggested] = (await api.upload("cat-and-dog.jpg")).animals;
+
+    expect(await api.confirmPetSuggestion(suggested!.id, tom.id)).toEqual(tom);
+
+    const [reopened] = (await api.upload("cat-and-dog.jpg")).animals;
+    expect(reopened!.pet).toEqual(tom);
+    expect(reopened!.suggestion).toBeUndefined();
+    expect(await api.pets()).toEqual([{ id: tom.id, name: "Tom", animalCount: 2 }]);
+  });
+
+  it("a rejected Suggestion never returns, and ignoring one saves nothing", async () => {
+    const [cat] = (await api.upload("cat.jpg")).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    const [suggested] = (await api.upload("cat-and-dog.jpg")).animals;
+    const ignored = await api.upload("cat-and-dog.jpg");
+    expect(ignored.animals[0]!.suggestion).toEqual(tom);
+
+    const afterRejecting = await api.rejectPetSuggestion(suggested!.id, tom.id);
+
+    expect(afterRejecting.suggestion).toBeUndefined();
+    expect(afterRejecting.pet).toBeUndefined();
+    const [reopened] = (await api.upload("cat-and-dog.jpg")).animals;
+    expect(reopened!.suggestion).toBeUndefined();
+    expect(reopened!.pet).toBeUndefined();
+  });
+
+  it("refuses to confirm or reject for an unknown Animal or Pet, or for a Person", async () => {
+    const { faces } = await api.upload("person-and-dog.jpg");
+    const grandpa = await api.nameFace(faces[0]!.id, "Grandpa");
+    const [cat] = (await api.upload("cat.jpg")).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    const [suggested] = (await api.upload("cat-and-dog.jpg")).animals;
+
+    for (const verb of ["confirm", "reject"]) {
+      expect((await api.call("POST", `/api/animals/no-such-animal/suggestion/${verb}`, { petId: tom.id })).status).toBe(404);
+      expect((await api.call("POST", `/api/animals/${suggested!.id}/suggestion/${verb}`, { petId: "nothing" })).status).toBe(404);
+      expect((await api.call("POST", `/api/animals/${suggested!.id}/suggestion/${verb}`, { petId: grandpa.id })).status).toBe(404);
+      expect((await api.call("POST", `/api/animals/${suggested!.id}/suggestion/${verb}`, {})).status).toBe(400);
+    }
+    expect((await api.upload("cat-and-dog.jpg")).animals[0]!.suggestion).toEqual(tom);
+  });
 });

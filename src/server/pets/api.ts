@@ -24,6 +24,19 @@ export function petRoutes(store: PetStore) {
     return pet === "no-animal" ? noSuchAnimal(c) : c.json<PetRef>(pet);
   });
 
+  // ✓ and ✕ on a Suggestion. The body names the suggested Pet, so that what is
+  // confirmed or rejected is what the user saw.
+  app.post("/animals/:id/suggestion/:verdict{confirm|reject}", async (c) => {
+    const petId = await fieldIn(c, "petId");
+    if (typeof petId !== "string") return problem(c, 400, "Say which Pet was suggested.");
+    const animalId = c.req.param("id");
+    const result =
+      c.req.param("verdict") === "confirm" ? store.confirmSuggestion(animalId, petId) : store.rejectSuggestion(animalId, petId);
+    if (result === "no-animal") return noSuchAnimal(c);
+    if (result === "no-pet") return noSuchPet(c);
+    return c.json(result);
+  });
+
   app.post("/animals/:id/not-a-pet", (c) =>
     store.markNotAPet(c.req.param("id")) ? c.body(null, 204) : noSuchAnimal(c),
   );

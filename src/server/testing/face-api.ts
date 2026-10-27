@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ExifTool } from "exiftool-vendored";
 import { expect } from "vitest";
-import type { Analysis, Face, PersonSummary, PetRef, PetSummary } from "../../shared/analysis.ts";
+import type { Analysis, Animal, Face,PersonSummary, PetRef, PetSummary } from "../../shared/analysis.ts";
 import { createApp } from "../app.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import { openFaceStore } from "../faces/store.ts";
@@ -84,6 +84,11 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
       expect((await call("POST", `/api/people/${personId}/merge`, { into: intoPersonId })).status).toBe(204),
     deletePerson: async (personId: string) => expect((await call("DELETE", `/api/people/${personId}`)).status).toBe(204),
     nameAnimal: (animalId: string, name: string) => json<PetRef>(call("PUT", `/api/animals/${animalId}/pet`, { name })),
+    confirmPetSuggestion: (animalId: string, petId: string) =>
+      json<PetRef>(call("POST", `/api/animals/${animalId}/suggestion/confirm`, { petId })),
+    /** Returns the Animal as it now stands. */
+    rejectPetSuggestion: (animalId: string, petId: string) =>
+      json<Animal>(call("POST", `/api/animals/${animalId}/suggestion/reject`, { petId })),
     markNotAPet: async (animalId: string) =>
       expect((await call("POST", `/api/animals/${animalId}/not-a-pet`)).status).toBe(204),
     pets: async () => (await json<{ pets: PetSummary[] }>(call("GET", "/api/pets"))).pets,
