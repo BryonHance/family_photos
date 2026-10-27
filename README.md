@@ -7,13 +7,13 @@ A private web viewer for the metadata inside family Photos. Drop a Photo in the 
 Requires [pixi](https://pixi.sh).
 
 ```sh
-pixi run models     # download the face models into models/ (needed by dev and test)
+pixi run models     # download the face and pet models into models/ (needed by dev and test)
 pixi run dev        # analyze API on :3000 and the Vite UI, with /api proxied
 pixi run test
 pixi run typecheck
 ```
 
-The server refuses to start until `pixi run models` has fetched the face models and their SHA-256s match.
+The server refuses to start until `pixi run models` has fetched the face and pet models and their SHA-256s match.
 
 ## Face models and their licence
 
@@ -23,6 +23,10 @@ The viewer finds Faces with InsightFace's [`buffalo_sc`](https://github.com/deep
 - the Docker build downloads them and checks their pinned SHA-256s, and the image is built only on the personal server and never pushed to a registry.
 
 Anyone forking this repository for another purpose must check the licence for themselves. See `docs/research/face-recognition-on-cpu.md` §6.
+
+## Pet models and their licence
+
+The viewer finds cats and dogs with [D-FINE-S](https://github.com/Peterande/D-FINE) trained on COCO, in onnx-community's [ONNX conversion](https://huggingface.co/onnx-community/dfine_s_coco-ONNX) at a pinned revision, run on the CPU with ONNX Runtime. It is Apache-2.0, unlike the face models, but it is still never committed: `pixi run models` downloads it into the git-ignored `models/pets/`, and the Docker build downloads it and checks its pinned SHA-256. Only the COCO-trained checkpoint is used; the Objects365 ones may not be cleared for use under the same licence. See `docs/research/face-and-pet-recognition.md` §6.
 
 ## Face data
 
@@ -44,7 +48,7 @@ It prints how similar Faces of the same person and of different people are, and 
 
 ## Deployment
 
-The viewer runs on the personal server as one Docker container. The image includes Perl for ExifTool and the face models, and runs the Hono server, which serves both the analyze API and the built UI from the same origin. Because of the models' licence (above), build the image on the server and never push it to a registry.
+The viewer runs on the personal server as one Docker container. The image includes Perl for ExifTool and the face and pet models, and runs the Hono server, which serves both the analyze API and the built UI from the same origin. Because of the face models' licence (above), build the image on the server and never push it to a registry.
 
 > **Home network and VPN only.** v1 has no login. Never expose the viewer's port to the public internet; adding authentication must come first (ADR-0001).
 
