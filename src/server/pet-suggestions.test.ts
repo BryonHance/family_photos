@@ -9,7 +9,8 @@ import { fixture, modelsDir, openApi, type Api } from "./testing/api.ts";
 
 // These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
 // The same cat is in cat.jpg, cat.png, cat.webp and (left) cat-and-dog.jpg.
-// The same dog is in dog.jpg, person-and-dog.jpg and (right) cat-and-dog.jpg.
+// The same dog is in dog.jpg, person-and-dog.jpg and (right) cat-and-dog.jpg, all
+// from one Photo, and in dog-at-checkpoint.jpg, taken on another day.
 
 let exiftool: ExifTool;
 let faceDetector: FaceDetector;
@@ -34,8 +35,6 @@ afterEach(async () => {
 
 const unknownPetLabels = (animals: { unknownPet?: { label: string; photoCount: number } }[]) =>
   animals.map((animal) => animal.unknownPet && `${animal.unknownPet.label}, in ${animal.unknownPet.photoCount} Photos`);
-
-const suggestedNames =(animals: { suggestion?: { name: string } }[]) => animals.map((animal) => animal.suggestion?.name);
 
 /** As `animalsWith`, for the real face models finding a Photo's Faces. */
 const facesWith = (...vectors: Record<number, number>[]): FaceDetector => ({
@@ -70,15 +69,15 @@ const animalsWith = (...vectors: Record<number, number>[]): AnimalDetector => ({
 });
 
 describe("Suggestions", () => {
-  it("suggests the Pet of a named Animal for the same pet in another Photo", async () => {
-    const [cat] = (await api.upload("cat.jpg")).animals;
-    const tom = await api.nameAnimal(cat!.id, "Tom");
+  it("suggests the Pet of a named Animal for the same pet in another, independently taken Photo", async () => {
+    const [dog] = (await api.upload("dog.jpg")).animals;
+    const ddunn = await api.nameAnimal(dog!.id, "Ddunn");
 
-    const animals = (await api.upload("cat-and-dog.jpg")).animals;
+    const animals = (await api.upload("dog-at-checkpoint.jpg")).animals;
 
-    expect(animals[0]!.suggestion).toEqual(tom);
+    expect(animals).toHaveLength(1);
+    expect(animals[0]!.suggestion).toEqual(ddunn);
     expect(animals[0]!.pet).toBeUndefined();
-    expect(suggestedNames(animals)).toEqual(["Tom", undefined]);
   });
 
   it("confirming a Suggestion names the Animal", async () => {

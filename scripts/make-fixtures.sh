@@ -171,6 +171,16 @@ magick "$tmp/handler.jpg" -resize 800x800 -strip -quality 80 "$out/person-and-do
 # The dog alone: the right-hand part of the same Photo, without the soldier.
 magick "$out/person-and-dog.jpg" -crop 300x618+480+0 +repage -strip -quality 80 "$out/dog.jpg"
 
+# The same dog (Ddunn) in a second, independently taken Photo, so that a
+# Suggestion can be tested on two real Photos of one animal: "Military working
+# dog and his handler clear vehicles at check point" (DVIDS 7642319, taken on
+# another day by the same US Army photographer, public domain as a work of the
+# US government). The dog stands at a truck's grille, the handler beside it.
+curl --fail --location --silent --show-error -A "family-photos-fixtures" -o "$tmp/checkpoint.jpg" \
+  "https://upload.wikimedia.org/wikipedia/commons/a/a5/Military_working_dog_and_his_handler_clear_vehicles_at_check_point_%287642319%29.jpg"
+echo "2844584b7e20b96bfe1efa6d4ba33ec3933784b53c0d7250835714f2e4e957f8  $tmp/checkpoint.jpg" | sha256sum --check --quiet
+magick "$tmp/checkpoint.jpg" -resize 800x800 -strip -quality 80 "$out/dog-at-checkpoint.jpg"
+
 # Two animals in one Photo: the cat (left) beside the dog (right), each 400 px high.
 magick \( "$out/cat.jpg" -resize x400 \) \( "$out/dog.jpg" -resize x400 \) +append -strip -quality 80 "$out/cat-and-dog.jpg"
 
