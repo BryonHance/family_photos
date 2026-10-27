@@ -25,7 +25,7 @@ try {
   process.exit(1);
 }
 
-// Face data only (ADR-0002): in Docker a named volume, kept out of off-server backups.
+// Face and pet data only (ADR-0002, ADR-0003): in Docker a named volume, kept out of off-server backups.
 const facesDb = process.env.FACES_DB ?? join(import.meta.dirname, "../../data/faces.db");
 await mkdir(dirname(facesDb), { recursive: true });
 const faceStore = openFaceStore(facesDb);

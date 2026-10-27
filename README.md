@@ -32,13 +32,15 @@ The viewer tells individual cats and dogs apart with AvitoTech's [CLIP-L for ani
 
 The Avito model was trained partly on [PetFace](https://github.com/mapooon/PetFace), whose authors release it "for research purposes only". Whether those terms reach a model trained on it is unresolved. This private, non-commercial viewer is fine either way, but anyone publishing an image or using the model commercially must check for themselves. See `docs/research/face-and-pet-recognition.md` §6.
 
-## Face data
+## Face and pet data
 
-Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, its Person or Stranger number, the Suggestions rejected for it, and the name of each Person. It holds nothing else. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
+Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, its Person or Stranger number, the Suggestions rejected for it, and the name of each Person. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
+
+The same file holds pet data, with the same protection (ADR-0003): each Animal's embedding (768 numbers) and box, its species, the Photo's SHA-256, the pet model version, its Pet or "Not a pet" mark, and the name of each Pet. An Animal's box often takes in the child hugging the dog, so its embedding is partly computed from a child's face. The file holds nothing else: never a Photo or any image of a Face or Animal.
 
 - In Docker, `faces.db` lives in the named volume `face-data`, mounted at `/app/data`. In development it is `data/faces.db`, which git ignores. Set `FACES_DB` to put it elsewhere.
-- **Keep the `face-data` volume out of every backup that leaves the server**, such as cloud or off-site backups. If the server is lost, open the Photos again to name each Person again.
-- "Delete all face data" in the People panel empties the file. Removing the volume (`docker compose down` then `docker volume rm family_photos_face-data`, or whatever name `docker volume ls` shows) also deletes it.
+- **Keep the `face-data` volume out of every backup that leaves the server**, such as cloud or off-site backups. If the server is lost, open the Photos again to name each Person and Pet again.
+- "Delete all face and pet data" in the People panel empties the file. Removing the volume (`docker compose down` then `docker volume rm family_photos_face-data`, or whatever name `docker volume ls` shows) also deletes it.
 
 ### Tuning Suggestions and Strangers
 
