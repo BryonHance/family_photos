@@ -3,7 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
 import type { Analysis, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
-import type { FaceDetector, PhotoPixels } from "./faces/detector.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import type { FaceStore } from "./faces/store.ts";
 import type { Pixels } from "./pixels.ts";
 import { decodeUprightHeic, isHeic, previewFor } from "./preview.ts";
@@ -18,6 +18,7 @@ import {
   type LongTag,
   type Tags,
 } from "./tags.ts";
+import { decodeUpright, type PhotoPixels } from "./upright.ts";
 import { deriveWarnings, STRUCTURAL_WARNINGS_ONLY } from "./warnings.ts";
 
 export type AnalyzerConfig = {
@@ -170,13 +171,15 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     return fields ? [{ name, fields }] : [];
   });
 
-  // A HEIC is decoded once, for both its preview and its Faces.
+  // The Photo is decoded and turned upright once. A HEIC's full-size pixels make
+  // its preview; the same pixels, shrunk, are what Faces are found in.
   const uprightHeic = isHeic(photoMimeType)
     ? await decodeUprightHeic(photo.bytes, {
         exif: numericValue(tags, "EXIF:IFD0:Orientation"),
         heifTransform: "QuickTime:Rotation" in tags || "QuickTime:Mirroring" in tags,
       })
     : undefined;
+  const upright = await decodeUprightPhoto(photoMimeType, photo.bytes, uprightHeic);
 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: photoMimeType },
@@ -184,7 +187,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     warnings: deriveWarnings(tags, sections, photo.lastModified),
     summary: summarize(tags),
     sections,
-    faces: await findFaces(config, photoMimeType, photo.bytes, uprightHeic),
+    faces: await findFaces(config, photo.bytes, upright),
   };
 }
 
@@ -192,25 +195,33 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
 const SHARP_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 /**
- * A Photo seen before, under the same model version, returns its stored Faces
- * without being detected again. JPEG, PNG and WebP go to sharp; a HEIC arrives
- * already decoded. TIFF and RAW get no Faces.
+ * The upright Photo as RGB, shared by the face and pet pipelines. JPEG, PNG and
+ * WebP go to sharp; a HEIC arrives already decoded. Undefined for TIFF and RAW,
+ * which get no Faces, and for a Photo too damaged to decode, whose Warnings say why.
  */
-async function findFaces(
-  { faceDetector, faceStore }: AnalyzerConfig,
+async function decodeUprightPhoto(
   mimeType: string,
   bytes: Uint8Array,
   uprightHeic: Pixels<4> | undefined,
-): Promise<Face[]> {
-  const pixels: PhotoPixels | undefined = uprightHeic
+): Promise<Pixels<3> | undefined> {
+  const photo: PhotoPixels | undefined = uprightHeic
     ? { kind: "raw", ...uprightHeic }
     : SHARP_TYPES.has(mimeType)
       ? { kind: "encoded", bytes }
       : undefined;
-  if (!pixels) return [];
+  return photo && decodeUpright(photo);
+}
+
+/** A Photo seen before, under the same model version, returns its stored Faces without being detected again. */
+async function findFaces(
+  { faceDetector, faceStore }: AnalyzerConfig,
+  bytes: Uint8Array,
+  upright: Pixels<3> | undefined,
+): Promise<Face[]> {
+  if (!upright) return [];
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   return faceStore.facesOfPhoto({ sha256, modelVersion: faceDetector.modelVersion }, async () =>
-    (await faceDetector.detect(pixels)).map(({ box, embedding }) => ({ box, embedding })),
+    (await faceDetector.detect({ kind: "raw", ...upright })).map(({ box, embedding }) => ({ box, embedding })),
   );
 }
 

@@ -5,6 +5,7 @@ import ort from "onnxruntime-node";
 import sharp from "sharp";
 import type { Box } from "../../shared/analysis.ts";
 import type { Pixels } from "../pixels.ts";
+import { decodeUpright, type PhotoPixels } from "../upright.ts";
 import { ALIGNED_SIZE, alignFace } from "./align.ts";
 import { iou } from "./overlap.ts";
 
@@ -24,13 +25,6 @@ export type DetectedFace = {
   embedding: Float32Array;
 };
 
-/**
- * The upright pixels of a Photo, as the face pipeline reads them: either an
- * encoded JPEG, PNG or WebP that sharp decodes and turns upright by its EXIF
- * Orientation, or raw pixels already upright (HEIC, decoded by heic-decode).
- */
-export type PhotoPixels = { kind: "encoded"; bytes: Uint8Array } | ({ kind: "raw" } & Pixels);
-
 export type FaceDetector = {
   /**
    * Names the models and the pipeline that made the embeddings. Embeddings from
@@ -48,11 +42,6 @@ const DETECTOR_FILE = "det_500m.onnx";
 const RECOGNIZER_FILE = "w600k_mbf.onnx";
 /** Change it whenever the models or the alignment change, so that stored Photos are detected again. */
 export const FACE_MODEL_VERSION = "buffalo_sc-v0.7/arcface-112";
-/**
- * The upright Photo is decoded at most this size on its long side: enough
- * pixels to align a Face found at 640 px, without holding a 48 MP Photo in memory.
- */
-const MAX_DECODED_SIDE = 2048;
 const INPUT_SIZE = 640;
 const STRIDES = [8, 16, 32] as const;
 const ANCHORS_PER_CELL = 2;
@@ -103,29 +92,6 @@ async function verifyModels(modelsDir: string) {
         `Face model ${path} does not match its pinned SHA-256. Run \`pixi run models\` to download it again.`,
       );
     }
-  }
-}
-
-/**
- * The upright Photo as RGB, at most MAX_DECODED_SIDE on its long side.
- * Undefined when the Photo cannot be decoded at all; a Photo that is only
- * partly damaged is decoded as far as it goes.
- */
-async function decodeUpright(photo: PhotoPixels): Promise<Pixels<3> | undefined> {
-  const image =
-    photo.kind === "encoded"
-      ? sharp(photo.bytes, { failOn: "none" }).autoOrient()
-      : sharp(photo.data, { raw: { width: photo.width, height: photo.height, channels: photo.channels } });
-  try {
-    const { data, info } = await image
-      .resize(MAX_DECODED_SIDE, MAX_DECODED_SIDE, { fit: "inside", withoutEnlargement: true })
-      .toColourspace("srgb")
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    return { width: info.width, height: info.height, channels: 3, data };
-  } catch {
-    return undefined;
   }
 }
 
