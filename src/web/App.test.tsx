@@ -649,6 +649,19 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = [], pets: Pe
       people = people.filter((p) => p.id !== match![1]);
       return new Response(null, { status: 204 });
     }
+    if ((match = route(/^\/api\/pets\/([^/]+)$/, "PATCH"))) {
+      pets = pets.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      return Response.json({ id: match[1], name: body!["name"] });
+    }
+    if ((match = route(/^\/api\/pets\/([^/]+)\/merge$/, "POST"))) {
+      const from = pets.find((p) => p.id === match![1])!;
+      pets = pets.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, animalCount: p.animalCount + from.animalCount } : p));
+      return new Response(null, { status: 204 });
+    }
+    if ((match = route(/^\/api\/pets\/([^/]+)$/, "DELETE"))) {
+      pets = pets.filter((p) => p.id !== match![1]);
+      return new Response(null, { status: 204 });
+    }
     if (route(/^\/api\/face-and-pet-data$/, "DELETE")) {
       people = [];
       pets = [];
@@ -1025,4 +1038,80 @@ it("lists Pets with their Animal counts in their own section of the People and p
   expect(within(petRow(panel, "Maxine")).getByText("2 Animals")).toBeInTheDocument();
   expect(within(within(panel).getByRole("region", { name: "People" })).getByText("Buzz Aldrin")).toBeInTheDocument();
   expect(within(panel).queryByRole("img")).not.toBeInTheDocument();
+});
+
+it("renames a Pet, renaming its Animals in the opened Photo and leaving Faces alone", async () => {
+  // Rex the dog and Rex the Person share an id here only to show that a Pet's change never reaches a Face.
+  const server = fakeFaceServer(
+    { ...crewWithPets, faces: [{ ...crew.faces[0]!, person: { id: "rex", name: "Rex" } }] },
+    [{ id: "rex", name: "Rex", faceCount: 1 }],
+    crewPets(),
+  );
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Rename Rex" }));
+  const field = within(panel).getByRole("textbox", { name: "New name for Rex" });
+  await userEvent.clear(field);
+  await userEvent.type(field, "Baron{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PATCH", url: "/api/pets/rex", body: { name: "Baron" } });
+  expect(await screen.findByRole("button", { name: "Animal 1: Baron (dog)" })).toBeInTheDocument();
+  expect(faceBox("Face 1: Rex")).toBeInTheDocument();
+  expect(await within(petRow(panel, "Baron")).findByText("4 Animals")).toBeInTheDocument();
+});
+
+it("merges one Pet into another Pet only, after a confirmation", async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Merge Rex" }));
+  const into = within(panel).getByRole("combobox", { name: "Merge Rex into" });
+  // Only Pets are offered: no Person.
+  expect(within(into).getAllByRole("option").map((o) => o.textContent)).toEqual(["Maxine"]);
+  await userEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Merge Rex into Maxine?"));
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/pets/rex/merge", body: { into: "maxi" } });
+  expect(await screen.findByRole("button", { name: "Animal 1: Maxine (dog)" })).toBeInTheDocument();
+  await waitFor(() => expect(within(petRow(panel, "Maxine")).getByText("6 Animals")).toBeInTheDocument());
+  expect(within(panel).queryByText("Rex", { selector: ".name-row-name" })).not.toBeInTheDocument();
+});
+
+it("deletes a Pet after a confirmation, leaving its Animals unnamed", async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Delete Rex?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/pets/rex", body: undefined });
+  expect(await screen.findByRole("button", { name: "Animal 1: dog" })).toBeInTheDocument();
+  await waitFor(() => expect(within(panel).queryByText("Rex", { selector: ".name-row-name" })).not.toBeInTheDocument());
+  expect(within(panel).getByText("Buzz Aldrin")).toBeInTheDocument();
+});
+
+it("shows the server's message when a Pet can't be renamed", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Maxine");
+  vi.mocked(fetch).mockResolvedValueOnce(
+    Response.json({ error: { message: "A Pet is already called Maxine. Merge them instead." } }, { status: 409 }),
+  );
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Rename Rex" }));
+  const field = within(panel).getByRole("textbox", { name: "New name for Rex" });
+  await userEvent.clear(field);
+  await userEvent.type(field, "maxine{Enter}");
+
+  expect(await within(panel).findByRole("alert")).toHaveTextContent("A Pet is already called Maxine. Merge them instead.");
+  expect(animalBox("Animal 1: Rex (dog)")).toBeInTheDocument();
 });
