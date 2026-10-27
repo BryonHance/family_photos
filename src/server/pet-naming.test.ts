@@ -43,6 +43,45 @@ describe("naming an Animal", () => {
   });
 });
 
+describe("Pets", () => {
+  /** Names cat-and-dog.jpg's cat and dog, and returns their Pets. */
+  async function nameCatAndDog(cat: string, dog: string) {
+    const [catAnimal, dogAnimal] = (await api.upload("cat-and-dog.jpg")).animals;
+    return { cat: await api.nameAnimal(catAnimal!.id, cat), dog: await api.nameAnimal(dogAnimal!.id, dog) };
+  }
+  const reopenedNames = async () => (await api.upload("cat-and-dog.jpg")).animals.map((animal) => animal.pet?.name);
+
+  it("renames a Pet, which renames every Animal of it", async () => {
+    const { cat, dog } = await nameCatAndDog("Tom", "Nellie");
+    const [alone] = (await api.upload("cat.jpg")).animals;
+    await api.nameAnimal(alone!.id, "Tom");
+
+    expect(await api.renamePet(cat.id, "Tommy")).toEqual({ id: cat.id, name: "Tommy" });
+
+    expect(await reopenedNames()).toEqual(["Tommy", "Nellie"]);
+    expect((await api.upload("cat.jpg")).animals.map((animal) => animal.pet?.name)).toEqual(["Tommy"]);
+    expect(await api.pets()).toEqual([
+      { id: dog.id, name: "Nellie", animalCount: 1 },
+      { id: cat.id, name: "Tommy", animalCount: 2 },
+    ]);
+  });
+
+  it("refuses to rename a Pet to another Pet's name, or to nothing, but takes a Person's name", async () => {
+    const { faces, animals } = await api.upload("person-and-dog.jpg");
+    await api.nameFace(faces[0]!.id, "Max");
+    const rex = await api.nameAnimal(animals[0]!.id, "Rex");
+    const { cat } = await nameCatAndDog("Tom", "Nellie");
+
+    expect((await api.call("PATCH", `/api/pets/${cat.id}`, { name: "nellie" })).status).toBe(409);
+    expect((await api.call("PATCH", `/api/pets/${cat.id}`, { name: " " })).status).toBe(400);
+    expect((await api.call("PATCH", "/api/pets/no-such-pet", { name: "Tom" })).status).toBe(404);
+    expect(await reopenedNames()).toEqual(["Tom", "Nellie"]);
+    // Pet names are kept apart from People's names.
+    expect(await api.renamePet(rex.id, "Max")).toEqual({ id: rex.id, name: "Max" });
+    expect((await api.upload("person-and-dog.jpg")).faces[0]!.person?.name).toBe("Max");
+  });
+});
+
 describe("reopening a Photo", () => {
   it("returns the same stored Animals with the Pet names given to them, without storing them twice", async () => {
     const first = (await api.upload("cat-and-dog.jpg")).animals;

@@ -87,6 +87,10 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
     markNotAPet: async (animalId: string) =>
       expect((await call("POST", `/api/animals/${animalId}/not-a-pet`)).status).toBe(204),
     pets: async () => (await json<{ pets: PetSummary[] }>(call("GET", "/api/pets"))).pets,
+    renamePet: (petId: string, name: string) => json<PetRef>(call("PATCH", `/api/pets/${petId}`, { name })),
+    mergePets: async (petId: string, intoPetId: string) =>
+      expect((await call("POST", `/api/pets/${petId}/merge`, { into: intoPetId })).status).toBe(204),
+    deletePet: async (petId: string) => expect((await call("DELETE", `/api/pets/${petId}`)).status).toBe(204),
     deleteAllFaceAndPetData: async () => expect((await call("DELETE", "/api/face-and-pet-data")).status).toBe(204),
 
     /**

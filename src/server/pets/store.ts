@@ -93,6 +93,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   );
   const findPetByName = db.prepare("SELECT id, name FROM pets WHERE name = ?");
   const insertPet = db.prepare("INSERT INTO pets (id, name) VALUES (?, ?)");
+  const findPet = db.prepare("SELECT id, name FROM pets WHERE id = ?");
+  const renamePet = db.prepare("UPDATE pets SET name = ? WHERE id = ?");
   const listPets = db.prepare(`
     SELECT pets.id, pets.name, COUNT(animals.id) AS animalCount
     FROM pets LEFT JOIN animals ON animals.pet_id = pets.id
@@ -170,6 +172,17 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
 
     /** Every Pet, by name, with how many Animals are named as them. */
     pets: () => listPets.all() as PetSummary[],
+
+    /** "name-taken" when another Pet already has the name, ignoring case. People's names are not looked at. */
+    renamePet(petId: string, name: string): PetRef | "no-pet" | "name-taken" {
+      return transaction(() => {
+        if (!findPet.get(petId)) return "no-pet";
+        const holder = findPetByName.get(name) as PetRef | undefined;
+        if (holder && holder.id !== petId) return "name-taken";
+        renamePet.run(name, petId);
+        return { id: petId, name };
+      });
+    },
 
     /** Deletes every Animal and Pet. Call it inside the face store's transaction. */
     deleteAllRows() {
