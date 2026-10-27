@@ -779,7 +779,7 @@ it("shows the server's message when a Face can no longer be named", async () => 
   expect(faceBox("Face 2")).toBeInTheDocument();
 });
 
-async function openPeoplePanel() {
+async function openPeopleAndPetsPanel() {
   await userEvent.click(screen.getByRole("button", { name: "People and pets" }));
   return screen.findByRole("region", { name: "People and pets" });
 }
@@ -798,7 +798,7 @@ it("lists People with their Face counts in the People and pets panel, even befor
   fakeFaceServer(crew, crewPeople());
   render(<App />);
 
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
 
   expect(await within(panel).findByText("Buzz Aldrin")).toBeInTheDocument();
   expect(within(personRow(panel, "Buzz Aldrin")).getByText("3 Faces")).toBeInTheDocument();
@@ -808,7 +808,7 @@ it("lists People with their Face counts in the People and pets panel, even befor
 it("renames a Person, renaming their Faces in the opened Photo", async () => {
   const server = fakeFaceServer(crew, crewPeople());
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
 
   await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Rename Neil" }));
@@ -825,7 +825,7 @@ it("merges one Person into another after a confirmation", async () => {
   const server = fakeFaceServer(crew, crewPeople());
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
 
   await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Merge Neil" }));
@@ -843,7 +843,7 @@ it("deletes a Person after a confirmation, leaving their Faces unnamed, and does
   const server = fakeFaceServer(crew, crewPeople());
   const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
   const deleteNeil = () => userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Delete Neil" }));
 
@@ -861,7 +861,7 @@ it('deletes all face and pet data after a confirmation, emptying the People and 
   const server = fakeFaceServer(crewWithPets, crewPeople(), [{ id: "rex", name: "Rex", animalCount: 1 }]);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
 
   await userEvent.click(within(panel).getByRole("button", { name: "Delete all face and pet data" }));
@@ -1038,7 +1038,7 @@ it("lists Pets with their Animal counts in their own section of the People and p
   fakeFaceServer(crew, crewPeople(), crewPets());
   render(<App />);
 
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
 
   expect(within(panel).getByRole("heading", { name: "People and pets" })).toBeInTheDocument();
   const pets = within(panel).getByRole("region", { name: "Pets" });
@@ -1057,7 +1057,7 @@ it("renames a Pet, renaming its Animals in the opened Photo and leaving Faces al
     crewPets(),
   );
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Maxine");
 
   await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Rename Rex" }));
@@ -1075,7 +1075,7 @@ it("merges one Pet into another Pet only, after a confirmation", async () => {
   const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Maxine");
 
   await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Merge Rex" }));
@@ -1095,7 +1095,7 @@ it("deletes a Pet after a confirmation, leaving its Animals unnamed", async () =
   const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Maxine");
 
   await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
@@ -1110,7 +1110,7 @@ it("deletes a Pet after a confirmation, leaving its Animals unnamed", async () =
 it("shows the server's message when a Pet can't be renamed", async () => {
   fakeFaceServer(crewWithPets, crewPeople(), crewPets());
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Maxine");
   vi.mocked(fetch).mockResolvedValueOnce(
     Response.json({ error: { message: "A Pet is already called Maxine. Merge them instead." } }, { status: 409 }),
@@ -1193,7 +1193,7 @@ it("deleting a Pet drops its Suggestion from the opened Photo", async () => {
   fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
   vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Maxine");
 
   await userEvent.click(within(petRow(panel, "Maxine")).getByRole("button", { name: "Delete Maxine" }));

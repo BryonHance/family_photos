@@ -11,7 +11,7 @@ type Named = { id: string; name: string };
 export type NamedKind = "person" | "pet";
 
 /** A change made in the People and pets panel, which the opened Photo's names must follow. */
-export type PeopleChange =
+export type PeopleAndPetsChange =
   | { of: NamedKind; kind: "renamed"; to: Named }
   | { of: NamedKind; kind: "merged"; from: string; into: Named }
   | { of: NamedKind; kind: "deleted"; id: string }
@@ -42,7 +42,7 @@ const KINDS = {
  * in its own section, to rename, merge or delete; and "Delete all face and pet
  * data". It shows no Photos: none are kept (ADR-0002, ADR-0003).
  */
-export function PeoplePanel({
+export function PeopleAndPetsPanel({
   people,
   pets,
   onOpen,
@@ -52,7 +52,7 @@ export function PeoplePanel({
   pets: PetSummary[];
   /** Called when the panel opens, to fetch the latest People and Pets. */
   onOpen: () => Promise<void>;
-  onChanged: (change: PeopleChange) => void;
+  onChanged: (change: PeopleAndPetsChange) => void;
 }) {
   const headingId = useId();
   const peopleHeadingId = useId();
@@ -62,7 +62,7 @@ export function PeoplePanel({
   const [error, setError] = useState<string>();
 
   /** Runs a change against the server, then tells the viewer; a refusal is shown in the panel. */
-  async function change(action: () => Promise<PeopleChange>) {
+  async function change(action: () => Promise<PeopleAndPetsChange>) {
     setError(undefined);
     try {
       onChanged(await action());
@@ -145,7 +145,7 @@ function NamedRow({
   named: Named;
   count: number;
   all: Named[];
-  onChange: (action: () => Promise<PeopleChange>) => Promise<void>;
+  onChange: (action: () => Promise<PeopleAndPetsChange>) => Promise<void>;
 }) {
   const kind = KINDS[of];
   const [mode, setMode] = useState<"view" | "rename" | "merge">("view");

@@ -16,7 +16,7 @@ import type {
 import { messageOf } from "./api.ts";
 import { faceApi } from "./faceApi.ts";
 import { FaceBoxes, FacesSection } from "./faces.tsx";
-import { PeoplePanel, type NamedKind, type PeopleChange } from "./people.tsx";
+import { PeopleAndPetsPanel, type NamedKind, type PeopleAndPetsChange } from "./people-and-pets.tsx";
 import { petApi } from "./petApi.ts";
 import { AnimalBoxes, PetsSection } from "./pets.tsx";
 
@@ -197,7 +197,7 @@ export function App() {
   }
 
   /** Keeps the opened Photo's names in step with a change made in the People and pets panel. */
-  function onPeopleChanged(change: PeopleChange) {
+  function onPeopleAndPetsChanged(change: PeopleAndPetsChange) {
     /**
      * The Person or Pet as they stand after the change: renamed, merged into
      * another, or gone. A change on one side leaves the other side alone.
@@ -320,7 +320,7 @@ export function App() {
         </label>
       </div>
       <div className="panel">
-        <PeoplePanel people={people} pets={pets} onOpen={refreshPeopleAndPets} onChanged={onPeopleChanged} />
+        <PeopleAndPetsPanel people={people} pets={pets} onOpen={refreshPeopleAndPets} onChanged={onPeopleAndPetsChanged} />
         {state.status === "analyzing" && (
           <p className="loading" role="status">
             Analyzing {state.photoName}…

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ExifTool } from "exiftool-vendored";
 import { expect } from "vitest";
-import type { Analysis, Animal, Face,PersonSummary, PetRef, PetSummary } from "../../shared/analysis.ts";
+import type { Analysis, Animal, Face, PersonSummary, PetRef, PetSummary } from "../../shared/analysis.ts";
 import { createApp } from "../app.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import { openFaceStore } from "../faces/store.ts";
@@ -18,15 +18,15 @@ export const fixture = (name: string) => join(import.meta.dirname, "../../../fix
 /** D-FINE-S and the Avito model, loaded once for every harness. */
 let sharedAnimalDetector: Promise<AnimalDetector> | undefined;
 
-export type FaceApi = Awaited<ReturnType<typeof openFaceApi>>;
+export type Api = Awaited<ReturnType<typeof openApi>>;
 
 /**
  * One app with its own faces.db. Every request goes through `createApp`, as in
  * production. `upload` takes another face or animal detector to stand in for an
  * older or newer model (for example `{ ...faceDetector, modelVersion: "old" }`).
  */
-export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTool; faceDetector: FaceDetector }) {
-  const dir = await mkdtemp(join(tmpdir(), "family-photos-faces-"));
+export async function openApi({ exiftool, faceDetector }: { exiftool: ExifTool; faceDetector: FaceDetector }) {
+  const dir = await mkdtemp(join(tmpdir(), "family-photos-api-"));
   const tempDir = join(dir, "uploads");
   await mkdir(tempDir);
   const dbPath = join(dir, "faces.db");

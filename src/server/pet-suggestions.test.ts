@@ -2,7 +2,7 @@ import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import type { AnimalDetector } from "./pets/detector.ts";
-import { modelsDir, openFaceApi, type FaceApi } from "./testing/face-api.ts";
+import { modelsDir, openApi, type Api } from "./testing/api.ts";
 
 // These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
 // The same cat is in cat.jpg, cat.png, cat.webp and (left) cat-and-dog.jpg.
@@ -10,7 +10,7 @@ import { modelsDir, openFaceApi, type FaceApi } from "./testing/face-api.ts";
 
 let exiftool: ExifTool;
 let faceDetector: FaceDetector;
-let api: FaceApi;
+let api: Api;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
@@ -22,7 +22,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  api = await openFaceApi({ exiftool, faceDetector });
+  api = await openApi({ exiftool, faceDetector });
 });
 
 afterEach(async () => {
