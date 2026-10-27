@@ -250,9 +250,18 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
     // A Stranger is only a number, a rejected Suggestion only a pair of ids, and
     // a Photo only its hash and the version of the models that read it. Pet data
     // has its own tables (pet-naming.test.ts) and nothing else is kept.
-    expect(Object.keys(api.storedRows()).sort()).toEqual(
-      ["animal_photos", "animals", "faces", "people", "pets", "photos", "rejected_suggestions", "strangers"],
-    );
+    expect(Object.keys(api.storedRows()).sort()).toEqual([
+      "animal_photos",
+      "animals",
+      "faces",
+      "people",
+      "pets",
+      "photos",
+      "rejected_pet_suggestions",
+      "rejected_suggestions",
+      "strangers",
+      "unknown_pets",
+    ]);
     for (const row of api.storedRows()["strangers"]!) expect(Object.keys(row)).toEqual(["id"]);
     for (const row of api.storedRows()["photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
   });
