@@ -34,7 +34,7 @@ The Avito model was trained partly on [PetFace](https://github.com/mapooon/PetFa
 
 ## Face and pet data
 
-Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, its Person or Stranger number, the Suggestions rejected for it, and the name of each Person. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
+Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, its Person or Stranger number, the Suggestions rejected for it, the People each Stranger was named as, and the name of each Person. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
 
 The same file holds pet data, with the same protection (ADR-0003): each Animal's embedding (768 numbers) and box, its species, the Photo's SHA-256, the pet model version, its Pet, Unknown pet number or "Not a pet" mark, the Suggestions rejected for it, the Pets each Unknown pet was named as, and the name of each Pet. An Animal's box often takes in the child hugging the dog, so its embedding is partly computed from a child's face. The file holds nothing else: never a Photo or any image of a Face or Animal.
 
