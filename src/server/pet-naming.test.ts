@@ -351,5 +351,7 @@ describe("what is kept (ADR-0001, ADR-0003)", () => {
     for (const row of tables["animal_photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
     // An Unknown pet is only a number.
     for (const row of tables["unknown_pets"]!) expect(Object.keys(row)).toEqual(["id"]);
+    // Naming one of its Animals keeps only the pair of Unknown pet and Pet.
+    for (const row of tables["named_unknown_pets"]!) expect(Object.keys(row)).toEqual(["unknown_pet_id", "pet_id"]);
   });
 });

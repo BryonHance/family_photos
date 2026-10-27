@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Animal, Box, PetRef, PetSummary, Species } from "../../shared/analysis.ts";
 import type { PhotoKey } from "../recognition/photo-key.ts";
 import { heirsOf } from "../recognition/overlap.ts";
+import { upgradeTable } from "../recognition/schema.ts";
 import { cosine, embeddingOf, pairSet } from "../recognition/similarity.ts";
 import { SUGGESTION_THRESHOLD, UNKNOWN_PET_THRESHOLD } from "./thresholds.ts";
 
@@ -18,24 +19,22 @@ import { SUGGESTION_THRESHOLD, UNKNOWN_PET_THRESHOLD } from "./thresholds.ts";
  * species, embedding, Pet, Unknown pet, model version and rejected Suggestions
  * are cleared.
  *
+ * An Animal has exactly one state (spec #20): named as a Pet, in an Unknown
+ * pet (its Suggestion, if any, is worked out afresh each time the Photo is
+ * opened), or marked "Not a pet". The table's CHECKs refuse any other mix.
+ *
  * Each rejected Suggestion is kept as the pair of Animal and Pet, so that it is
  * never suggested again. An Unknown pet is only a number: its Animals point to
  * it. AUTOINCREMENT keeps a number from ever being reused once its Unknown pet
- * empties, and through "Delete all face and pet data", as for Strangers.
+ * empties, and through "Delete all face and pet data", as for Strangers. Naming
+ * one of its Animals takes that Animal out, and keeps the pair of Unknown pet
+ * and Pet so that the rest are suggested as that Pet.
  *
  * Each Photo with stored Animals keeps the pet model version that last read it,
  * apart from the face model version, so that a change to either model detects
  * only its own kind again.
  */
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS pets (
-    id   TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE
-  );
-  CREATE TABLE IF NOT EXISTS unknown_pets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT
-  );
-  CREATE TABLE IF NOT EXISTS animals (
+const ANIMALS = `(
     id             TEXT PRIMARY KEY,
     photo_sha256   TEXT NOT NULL,
     box_x          REAL NOT NULL,
@@ -49,19 +48,39 @@ const SCHEMA = `
     not_a_pet      INTEGER NOT NULL DEFAULT 0 CHECK (not_a_pet IN (0, 1)),
     unknown_pet_id INTEGER REFERENCES unknown_pets (id) ON DELETE SET NULL,
     CHECK (not_a_pet = 0 OR (species IS NULL AND embedding IS NULL AND pet_id IS NULL AND model_version IS NULL AND unknown_pet_id IS NULL)),
-    CHECK (not_a_pet = 1 OR (species IS NOT NULL AND embedding IS NOT NULL AND model_version IS NOT NULL))
+    CHECK (not_a_pet = 1 OR (species IS NOT NULL AND embedding IS NOT NULL AND model_version IS NOT NULL)),
+    CHECK (pet_id IS NULL OR unknown_pet_id IS NULL)
+  )`;
+
+const TABLES = `
+  CREATE TABLE IF NOT EXISTS pets (
+    id   TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE
   );
-  CREATE INDEX IF NOT EXISTS animals_by_photo ON animals (photo_sha256);
-  CREATE INDEX IF NOT EXISTS animals_by_pet ON animals (pet_id);
+  CREATE TABLE IF NOT EXISTS unknown_pets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
+  );
+  CREATE TABLE IF NOT EXISTS animals ${ANIMALS};
   CREATE TABLE IF NOT EXISTS rejected_pet_suggestions (
     animal_id TEXT NOT NULL REFERENCES animals (id) ON DELETE CASCADE,
     pet_id    TEXT NOT NULL REFERENCES pets (id) ON DELETE CASCADE,
     PRIMARY KEY (animal_id, pet_id)
   );
+  CREATE TABLE IF NOT EXISTS named_unknown_pets (
+    unknown_pet_id INTEGER NOT NULL REFERENCES unknown_pets (id) ON DELETE CASCADE,
+    pet_id         TEXT NOT NULL REFERENCES pets (id) ON DELETE CASCADE,
+    PRIMARY KEY (unknown_pet_id, pet_id)
+  );
   CREATE TABLE IF NOT EXISTS animal_photos (
     sha256        TEXT PRIMARY KEY,
     model_version TEXT NOT NULL
   );
+`;
+
+const INDEXES = `
+  CREATE INDEX IF NOT EXISTS animals_by_photo ON animals (photo_sha256);
+  CREATE INDEX IF NOT EXISTS animals_by_pet ON animals (pet_id);
+  CREATE INDEX IF NOT EXISTS animals_by_unknown_pet ON animals (unknown_pet_id);
 `;
 
 /** An Animal as the pet models found it, before it is stored. */
@@ -86,7 +105,6 @@ type NamedRow = {
   photo_sha256: string;
   embedding: Uint8Array;
   pet_id: string;
-  unknown_pet_id: number | null;
   pet_name: string;
 };
 
@@ -110,19 +128,29 @@ type AnimalRow = {
  * store's, so that both halves take turns the same way.
  */
 export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T) {
-  db.exec(SCHEMA);
-  // faces.db files made before Unknown pets lack the column (and so its CHECK).
+  db.exec(TABLES);
+  // faces.db files made before Unknown pets lack the column.
   const columns = db.prepare("PRAGMA table_info(animals)").all() as { name: string }[];
   if (!columns.some((column) => column.name === "unknown_pet_id")) {
     db.exec("ALTER TABLE animals ADD COLUMN unknown_pet_id INTEGER REFERENCES unknown_pets (id) ON DELETE SET NULL");
   }
-  db.exec("CREATE INDEX IF NOT EXISTS animals_by_unknown_pet ON animals (unknown_pet_id)");
+  // faces.db files made before an Animal had one state kept a named Animal in its
+  // Unknown pet: it leaves, and the Unknown pet remembers it was named so.
+  upgradeTable(
+    db,
+    "animals",
+    ANIMALS,
+    `INSERT OR IGNORE INTO named_unknown_pets (unknown_pet_id, pet_id)
+       SELECT unknown_pet_id, pet_id FROM animals WHERE pet_id IS NOT NULL AND unknown_pet_id IS NOT NULL;
+     UPDATE animals SET unknown_pet_id = NULL WHERE pet_id IS NOT NULL;`,
+  );
+  db.exec(INDEXES);
 
   const animalsOfPhotoQuery = db.prepare(`
     SELECT animals.id, box_x, box_y, box_width, box_height, species, pet_id, not_a_pet, unknown_pet_id,
            pets.name AS pet_name,
            (SELECT COUNT(DISTINCT member.photo_sha256) FROM animals AS member
-            WHERE member.unknown_pet_id = animals.unknown_pet_id AND member.pet_id IS NULL) AS unknown_pet_photos
+            WHERE member.unknown_pet_id = animals.unknown_pet_id) AS unknown_pet_photos
     FROM animals LEFT JOIN pets ON pets.id = animals.pet_id
     WHERE photo_sha256 = ?
     ORDER BY box_x`);
@@ -131,7 +159,11 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const deleteAnimalsOfPhoto = db.prepare("DELETE FROM animals WHERE photo_sha256 = ?");
   const findAnimal = db.prepare("SELECT not_a_pet FROM animals WHERE id = ?");
-  const setPetOfAnimal = db.prepare("UPDATE animals SET pet_id = ? WHERE id = ?");
+  // Naming an Animal takes it out of its Unknown pet, which remembers the Pet for the rest.
+  const nameUnknownPet = db.prepare(`
+    INSERT OR IGNORE INTO named_unknown_pets (unknown_pet_id, pet_id)
+    SELECT unknown_pet_id, ?2 FROM animals WHERE id = ?1 AND unknown_pet_id IS NOT NULL`);
+  const setPetOfAnimal = db.prepare("UPDATE animals SET pet_id = ?, unknown_pet_id = NULL WHERE id = ?");
   const markNotAPet = db.prepare(
     `UPDATE animals SET not_a_pet = 1, species = NULL, embedding = NULL, pet_id = NULL, model_version = NULL, unknown_pet_id = NULL
      WHERE id = ?`,
@@ -141,7 +173,9 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const findPet = db.prepare("SELECT id, name FROM pets WHERE id = ?");
   const renamePet = db.prepare("UPDATE pets SET name = ? WHERE id = ?");
   const movePetAnimals = db.prepare("UPDATE animals SET pet_id = ? WHERE pet_id = ?");
-  // Its Animals are left unnamed by ON DELETE SET NULL.
+  // Those left behind go with the merged Pet, by ON DELETE CASCADE.
+  const movePetUnknownPets = db.prepare("UPDATE OR IGNORE named_unknown_pets SET pet_id = ? WHERE pet_id = ?");
+  // Its Animals are left unnamed by ON DELETE SET NULL, and its Unknown pets no longer named so by ON DELETE CASCADE.
   const deletePet = db.prepare("DELETE FROM pets WHERE id = ?");
   const listPets = db.prepare(`
     SELECT pets.id, pets.name, COUNT(animals.id) AS animalCount
@@ -150,7 +184,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     ORDER BY pets.name`);
   // Every named Animal's embedding, for Suggestions: a plain scan, never mixed with Faces (spec #20).
   const namedAnimals = db.prepare(`
-    SELECT photo_sha256, embedding, pet_id, unknown_pet_id, pets.name AS pet_name
+    SELECT photo_sha256, embedding, pet_id, pets.name AS pet_name
     FROM animals JOIN pets ON pets.id = animals.pet_id
     WHERE model_version = ?`);
   const embeddingsOfPhoto = db.prepare(
@@ -159,20 +193,24 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   // The unnamed Animals of every Unknown pet, for Animals looking for one to join.
   const unknownPetMembers = db.prepare(`
     SELECT photo_sha256, embedding, unknown_pet_id FROM animals
-    WHERE unknown_pet_id IS NOT NULL AND pet_id IS NULL AND model_version = ?`);
-  // For each Animal of a Photo, the Unknown pets it must not join: those with an
-  // Animal named as a Pet it rejected.
+    WHERE unknown_pet_id IS NOT NULL AND model_version = ?`);
+  // The Pets each Unknown pet of a Photo's Animals was named as, through one of its Animals.
+  const namesOfUnknownPets = db.prepare(`
+    SELECT DISTINCT named_unknown_pets.unknown_pet_id, named_unknown_pets.pet_id
+    FROM named_unknown_pets JOIN animals ON animals.unknown_pet_id = named_unknown_pets.unknown_pet_id
+    WHERE animals.photo_sha256 = ?`);
+  // For each Animal of a Photo, the Unknown pets it must not join: those named
+  // as a Pet it rejected.
   const barredUnknownPets = db.prepare(`
-    SELECT rejected_pet_suggestions.animal_id, named.unknown_pet_id
+    SELECT rejected_pet_suggestions.animal_id, named_unknown_pets.unknown_pet_id
     FROM rejected_pet_suggestions
-    JOIN animals AS animal ON animal.id = rejected_pet_suggestions.animal_id
-    JOIN animals AS named ON named.pet_id = rejected_pet_suggestions.pet_id
-    WHERE animal.photo_sha256 = ? AND named.unknown_pet_id IS NOT NULL`);
+    JOIN animals ON animals.id = rejected_pet_suggestions.animal_id
+    JOIN named_unknown_pets ON named_unknown_pets.pet_id = rejected_pet_suggestions.pet_id
+    WHERE animals.photo_sha256 = ?`);
   const photosOfPet = db.prepare("SELECT DISTINCT photo_sha256 FROM animals WHERE pet_id = ?");
-  const leaveUnknownPets = db.prepare("UPDATE animals SET unknown_pet_id = NULL WHERE pet_id = ?");
   const leaveUnknownPetOfPet = db.prepare(`
     UPDATE animals SET unknown_pet_id = NULL
-    WHERE id = ?1 AND unknown_pet_id IN (SELECT unknown_pet_id FROM animals WHERE pet_id = ?2)`);
+    WHERE id = ?1 AND unknown_pet_id IN (SELECT unknown_pet_id FROM named_unknown_pets WHERE pet_id = ?2)`);
   const newUnknownPet = db.prepare("INSERT INTO unknown_pets DEFAULT VALUES");
   const setUnknownPetOfAnimal = db.prepare("UPDATE animals SET unknown_pet_id = ? WHERE id = ?");
   const deleteEmptyUnknownPets = db.prepare(
@@ -210,8 +248,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
    * pet: it joins the Unknown pet of its most similar unnamed Animal in another
    * Photo, at or above UNKNOWN_PET_THRESHOLD, or starts a new one. Each Animal
    * chooses on its own, so two Animals of one Photo may join the same Unknown
-   * pet. An Animal never joins an Unknown pet with an Animal named as a Pet it
-   * rejected. Unknown pets never merge. True when any Animal was placed.
+   * pet. An Animal never joins an Unknown pet named as a Pet it rejected. Unknown pets never merge. True when any Animal was placed.
    */
   function joinUnknownPets(sha256: string, suggestions: Map<string, PetRef>): boolean {
     const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
@@ -246,8 +283,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
 
   /**
    * Each unnamed Animal's Suggestion: the Pet of its nearest named Animal in
-   * another Photo, at or above SUGGESTION_THRESHOLD, or the Pet of a named
-   * Animal of its Unknown pet however alike they are; unless the user rejected
+   * another Photo, at or above SUGGESTION_THRESHOLD, or a Pet its Unknown pet
+   * was named as however alike they are; unless the user rejected
    * that Pet for it. Species does not limit it: the detector's species is a hint,
    * not a fact about the Pet. A Pet already named in this Photo is not
    * suggested, and no two Animals of one Photo are suggested as the same Pet:
@@ -265,11 +302,15 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       .filter((row) => row.photo_sha256 !== sha256 && !namedHere.has(row.pet_id))
       .map((row) => ({
         pet: { id: row.pet_id, name: row.pet_name },
-        unknownPetId: row.unknown_pet_id,
         embedding: embeddingOf(row.embedding),
       }));
     const rejected = pairSet(
       (rejectionsOfPhoto.all(sha256) as { animal_id: string; pet_id: string }[]).map((r) => [r.animal_id, r.pet_id] as const),
+    );
+    const namedAs = pairSet(
+      (namesOfUnknownPets.all(sha256) as { unknown_pet_id: number; pet_id: string }[]).map(
+        (r) => [r.unknown_pet_id, r.pet_id] as const,
+      ),
     );
 
     // Each Animal's own best Pet first; only then are clashes settled.
@@ -280,7 +321,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       for (const candidate of named) {
         if (rejected.has(animal.id, candidate.pet.id)) continue;
         const score = cosine(embedding, candidate.embedding);
-        const sameUnknownPet = animal.unknown_pet_id !== null && candidate.unknownPetId === animal.unknown_pet_id;
+        const sameUnknownPet = animal.unknown_pet_id !== null && namedAs.has(animal.unknown_pet_id, candidate.pet.id);
         const known = best.get(candidate.pet.id);
         best.set(candidate.pet.id, {
           pet: candidate.pet,
@@ -358,7 +399,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         const animal = findAnimal.get(animalId) as { not_a_pet: number } | undefined;
         if (!animal || animal.not_a_pet === 1) return "no-animal";
         const pet = petNamed(name);
-        setPetOfAnimal.run(pet.id, animalId);
+        nameAs(animalId, pet.id);
         return pet;
       });
     },
@@ -369,7 +410,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         if (!photoOfAnimal.get(animalId)) return "no-animal";
         const pet = findPet.get(petId) as PetRef | undefined;
         if (!pet) return "no-pet";
-        setPetOfAnimal.run(pet.id, animalId);
+        nameAs(animalId, pet.id);
         return { id: pet.id, name: pet.name };
       });
     },
@@ -384,7 +425,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         if (!photo) return "no-animal";
         if (!findPet.get(petId)) return "no-pet";
         rejectSuggestion.run(animalId, petId);
-        // Out of an Unknown pet that has an Animal named as this Pet; it then joins another by the usual rule.
+        // Out of an Unknown pet named as this Pet; it then joins another by the usual rule.
         if (leaveUnknownPetOfPet.run(animalId, petId).changes > 0) deleteEmptyUnknownPets.run();
         return present(photo.photo_sha256).find((animal) => animal.id === animalId)!;
       });
@@ -426,6 +467,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       return transaction(() => {
         if (!findPet.get(petId) || !findPet.get(intoPetId)) return "no-pet";
         movePetAnimals.run(intoPetId, petId);
+        movePetUnknownPets.run(intoPetId, petId);
         deletePet.run(petId);
         return "merged";
       });
@@ -438,7 +480,6 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     deletePet(petId: string): boolean {
       return transaction(() => {
         const photos = photosOfPet.all(petId) as { photo_sha256: string }[];
-        leaveUnknownPets.run(petId);
         if (deletePet.run(petId).changes === 0) return false;
         deleteEmptyUnknownPets.run();
         for (const { photo_sha256 } of photos) present(photo_sha256);
@@ -449,12 +490,23 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     /** Deletes every Animal, Pet and Unknown pet. Call it inside the face store's transaction. */
     deleteAllRows() {
       db.exec("DELETE FROM animals");
+      db.exec("DELETE FROM named_unknown_pets");
       db.exec("DELETE FROM pets");
       db.exec("DELETE FROM animal_photos");
       // AUTOINCREMENT's counter survives, so Unknown pet numbers are never reused (spec #20).
       db.exec("DELETE FROM unknown_pets");
     },
   };
+
+  /**
+   * Names an Animal as a Pet, taking it out of its Unknown pet, which is then
+   * named as that Pet so that the rest of it are suggested as the Pet.
+   */
+  function nameAs(animalId: string, petId: string) {
+    nameUnknownPet.run(animalId, petId);
+    setPetOfAnimal.run(petId, animalId);
+    deleteEmptyUnknownPets.run();
+  }
 
   function petNamed(name: string): PetRef {
     const existing = findPetByName.get(name) as PetRef | undefined;

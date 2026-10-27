@@ -254,6 +254,7 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
       "animal_photos",
       "animals",
       "faces",
+      "named_unknown_pets",
       "people",
       "pets",
       "photos",

@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import type { AnimalDetector } from "./pets/detector.ts";
-import { modelsDir, openApi, type Api } from "./testing/api.ts";
+import { fixture, modelsDir, openApi, type Api } from "./testing/api.ts";
 
 // These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
 // The same cat is in cat.jpg, cat.png, cat.webp and (left) cat-and-dog.jpg.
@@ -319,5 +322,83 @@ describe("Unknown pets", () => {
       expect(await reopen("person-and-dog.jpg")).toEqual(afterRejecting);
       expect((await reopen("dog.jpg")).suggestion).toEqual(tom);
     });
+
+    it("keeps one state per Animal: naming or confirming takes it out of its Unknown pet", async () => {
+      const { a, b } = await uploadChain();
+      const tom = await api.nameAnimal(a.id, "Tom");
+      await api.confirmPetSuggestion(b.id, tom.id);
+
+      const stored = api.storedRows()["animals"]!;
+      for (const named of [a, b]) {
+        expect(stored.find((row) => row["id"] === named.id)).toMatchObject({ pet_id: tom.id, unknown_pet_id: null });
+      }
+      // C is still suggested as Tom.
+      expect((await reopen("person-and-dog.jpg")).suggestion).toEqual(tom);
+    });
+  });
+
+  it("upgrades a faces.db that kept a named Animal in its Unknown pet, and refuses both from then on", async () => {
+    await api.close();
+    const catPhoto = await photoHash("cat.jpg");
+    const dogPhoto = await photoHash("dog.jpg");
+    const unit = (axis: number) => {
+      const embedding = new Float32Array(768);
+      embedding[axis] = 1;
+      return new Uint8Array(embedding.buffer);
+    };
+    api = await openApi({
+      exiftool,
+      faceDetector,
+      // As the pet store left it before an Animal had one state: the named cat
+      // kept its Unknown pet, which the unlike dog is also in.
+      existing: (db) => {
+        db.exec(`
+          CREATE TABLE pets (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
+          CREATE TABLE unknown_pets (id INTEGER PRIMARY KEY AUTOINCREMENT);
+          CREATE TABLE animals (
+            id             TEXT PRIMARY KEY,
+            photo_sha256   TEXT NOT NULL,
+            box_x          REAL NOT NULL,
+            box_y          REAL NOT NULL,
+            box_width      REAL NOT NULL,
+            box_height     REAL NOT NULL,
+            species        TEXT CHECK (species IN ('cat', 'dog')),
+            model_version  TEXT,
+            embedding      BLOB,
+            pet_id         TEXT REFERENCES pets (id) ON DELETE SET NULL,
+            not_a_pet      INTEGER NOT NULL DEFAULT 0 CHECK (not_a_pet IN (0, 1)),
+            unknown_pet_id INTEGER REFERENCES unknown_pets (id) ON DELETE SET NULL,
+            CHECK (not_a_pet = 0 OR (species IS NULL AND embedding IS NULL AND pet_id IS NULL AND model_version IS NULL AND unknown_pet_id IS NULL)),
+            CHECK (not_a_pet = 1 OR (species IS NOT NULL AND embedding IS NOT NULL AND model_version IS NOT NULL))
+          );
+          CREATE TABLE animal_photos (sha256 TEXT PRIMARY KEY, model_version TEXT NOT NULL);
+          INSERT INTO pets VALUES ('tom', 'Tom');
+          INSERT INTO unknown_pets VALUES (5);`);
+        const insert = db.prepare("INSERT INTO animals VALUES (?, ?, 0.1, 0.1, 0.5, 0.5, ?, ?, ?, ?, 0, 5)");
+        insert.run("cat", catPhoto, "cat", api.animalDetector.modelVersion, unit(0), "tom");
+        insert.run("dog", dogPhoto, "dog", api.animalDetector.modelVersion, unit(1), null);
+        const photo = db.prepare("INSERT INTO animal_photos VALUES (?, ?)");
+        for (const sha256 of [catPhoto, dogPhoto]) photo.run(sha256, api.animalDetector.modelVersion);
+      },
+    });
+
+    expect((await api.upload("dog.jpg")).animals).toEqual([
+      expect.objectContaining({ id: "dog", suggestion: { id: "tom", name: "Tom" } }),
+    ]);
+    expect((await api.upload("cat.jpg")).animals).toEqual([
+      expect.objectContaining({ id: "cat", pet: { id: "tom", name: "Tom" } }),
+    ]);
+    expect(api.storedRows()["animals"]!.find((row) => row["id"] === "cat")).toMatchObject({ unknown_pet_id: null });
+    const db = new DatabaseSync(api.dbPath);
+    try {
+      expect(() => db.exec("UPDATE animals SET unknown_pet_id = (SELECT id FROM unknown_pets) WHERE id = 'cat'")).toThrow(
+        /CHECK constraint failed/,
+      );
+    } finally {
+      db.close();
+    }
   });
 });
+
+/** The SHA-256 of a fixture's bytes: the Photo's hash, as the store keys it. */
+const photoHash = async (name: string) => createHash("sha256").update(await readFile(fixture(name))).digest("hex");

@@ -24,12 +24,27 @@ export type Api = Awaited<ReturnType<typeof openApi>>;
  * One app with its own faces.db. Every request goes through `createApp`, as in
  * production. `upload` takes another face or animal detector to stand in for an
  * older or newer model (for example `{ ...faceDetector, modelVersion: "old" }`).
+ * `existing` writes a faces.db as an older version of the viewer left it,
+ * before the store opens it.
  */
-export async function openApi({ exiftool, faceDetector }: { exiftool: ExifTool; faceDetector: FaceDetector }) {
+export async function openApi({
+  exiftool,
+  faceDetector,
+  existing,
+}: {
+  exiftool: ExifTool;
+  faceDetector: FaceDetector;
+  existing?: (db: DatabaseSync) => void;
+}) {
   const dir = await mkdtemp(join(tmpdir(), "family-photos-api-"));
   const tempDir = join(dir, "uploads");
   await mkdir(tempDir);
   const dbPath = join(dir, "faces.db");
+  if (existing) {
+    const db = new DatabaseSync(dbPath);
+    existing(db);
+    db.close();
+  }
   const faceStore = openFaceStore(dbPath);
   // Every Photo is searched for cats and dogs too, as in production.
   const animalDetector = await (sharedAnimalDetector ??= loadAnimalDetector(modelsDir));
