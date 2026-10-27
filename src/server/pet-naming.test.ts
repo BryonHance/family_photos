@@ -329,12 +329,27 @@ describe("what is kept (ADR-0001, ADR-0003)", () => {
     expect(rows).toHaveLength(3);
     for (const row of rows) {
       expect(Object.keys(row).sort()).toEqual(
-        ["box_height", "box_width", "box_x", "box_y", "embedding", "id", "model_version", "not_a_pet", "pet_id", "photo_sha256", "species"],
+        [
+          "box_height",
+          "box_width",
+          "box_x",
+          "box_y",
+          "embedding",
+          "id",
+          "model_version",
+          "not_a_pet",
+          "pet_id",
+          "photo_sha256",
+          "species",
+          "unknown_pet_id",
+        ],
       );
       // 768 float32s: an embedding, not pixels.
       expect((row["embedding"] as Uint8Array).byteLength).toBe(768 * 4);
     }
     for (const row of tables["pets"]!) expect(Object.keys(row)).toEqual(["id", "name"]);
     for (const row of tables["animal_photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
+    // An Unknown pet is only a number.
+    for (const row of tables["unknown_pets"]!) expect(Object.keys(row)).toEqual(["id"]);
   });
 });

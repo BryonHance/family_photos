@@ -29,7 +29,10 @@ afterEach(async () => {
   await api.close();
 });
 
-const suggestedNames = (animals: { suggestion?: { name: string } }[]) => animals.map((animal) => animal.suggestion?.name);
+const unknownPetLabels = (animals: { unknownPet?: { label: string; photoCount: number } }[]) =>
+  animals.map((animal) => animal.unknownPet && `${animal.unknownPet.label}, in ${animal.unknownPet.photoCount} Photos`);
+
+const suggestedNames =(animals: { suggestion?: { name: string } }[]) => animals.map((animal) => animal.suggestion?.name);
 
 /**
  * The real pet models finding a Photo's Animals and their species, standing in
@@ -157,5 +160,36 @@ describe("Suggestions", () => {
       expect((await api.call("POST", `/api/animals/${suggested!.id}/suggestion/${verb}`, {})).status).toBe(400);
     }
     expect((await api.upload("cat-and-dog.jpg")).animals[0]!.suggestion).toEqual(tom);
+  });
+});
+
+describe("Unknown pets", () => {
+  it("labels unnamed Animals of the same pet across two Photos alike, with how many Photos they span", async () => {
+    const first = (await api.upload("cat.jpg")).animals;
+    // An Unknown pet in a single Photo shows no label.
+    expect(unknownPetLabels(first)).toEqual([undefined]);
+
+    const second = (await api.upload("cat-and-dog.jpg")).animals;
+
+    // The dog is in no other Photo yet.
+    expect(unknownPetLabels(second)).toEqual([expect.stringMatching(/^Unknown pet \d+, in 2 Photos$/), undefined]);
+    expect(unknownPetLabels((await api.upload("cat.jpg")).animals)).toEqual([unknownPetLabels(second)[0]]);
+    expect(second.every((animal) => animal.pet === undefined && animal.suggestion === undefined)).toBe(true);
+
+    const [dog] = (await api.upload("dog.jpg")).animals;
+    expect(dog!.unknownPet).toEqual({ label: expect.stringMatching(/^Unknown pet \d+$/), photoCount: 2 });
+    expect(dog!.unknownPet!.label).not.toBe(second[0]!.unknownPet!.label);
+  });
+
+  it('never reuses an Unknown pet number, even after "Delete all face and pet data"', async () => {
+    await api.upload("cat.jpg");
+    const before = unknownPetLabels((await api.upload("cat-and-dog.jpg")).animals);
+
+    await api.deleteAllFaceAndPetData();
+
+    await api.upload("cat.jpg");
+    const [after] = unknownPetLabels((await api.upload("cat-and-dog.jpg")).animals);
+    expect(after).toMatch(/^Unknown pet \d+, in 2 Photos$/);
+    expect(before).not.toContain(after);
   });
 });

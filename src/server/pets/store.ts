@@ -4,18 +4,24 @@ import type { Animal, Box, PetRef, PetSummary, Species } from "../../shared/anal
 import type { PhotoKey } from "../faces/store.ts";
 import { heirsOf } from "../faces/overlap.ts";
 import { cosine, embeddingOf, pairSet } from "../faces/similarity.ts";
-import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
+import { SUGGESTION_THRESHOLD, UNKNOWN_PET_THRESHOLD } from "./thresholds.ts";
 
 /**
  * Pet data, kept in faces.db beside face data so that the same delete wipes it
  * and the same backup rule keeps it on the server (ADR-0003): per Animal, its
  * box, species, the Photo's SHA-256, the pet model version, its embedding and
- * its Pet or "Not a pet" mark; and each Pet's name. Pets are not People: they
- * have their own table and their own names. Never the Photo, its name, or any
- * image of an Animal.
+ * its Pet, Unknown pet, rejected Suggestions or "Not a pet" mark; and each
+ * Pet's name. Pets are not People: they have their own table and their own
+ * names. Never the Photo, its name, or any image of an Animal.
  *
  * An Animal marked "Not a pet" keeps only its box and the Photo's hash: its
- * species, embedding, Pet and model version are cleared.
+ * species, embedding, Pet, Unknown pet, model version and rejected Suggestions
+ * are cleared.
+ *
+ * Each rejected Suggestion is kept as the pair of Animal and Pet, so that it is
+ * never suggested again. An Unknown pet is only a number: its Animals point to
+ * it. AUTOINCREMENT keeps a number from ever being reused once its Unknown pet
+ * empties, and through "Delete all face and pet data", as for Strangers.
  *
  * Each Photo with stored Animals keeps the pet model version that last read it,
  * apart from the face model version, so that a change to either model detects
@@ -26,19 +32,23 @@ const SCHEMA = `
     id   TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE
   );
+  CREATE TABLE IF NOT EXISTS unknown_pets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
+  );
   CREATE TABLE IF NOT EXISTS animals (
-    id            TEXT PRIMARY KEY,
-    photo_sha256  TEXT NOT NULL,
-    box_x         REAL NOT NULL,
-    box_y         REAL NOT NULL,
-    box_width     REAL NOT NULL,
-    box_height    REAL NOT NULL,
-    species       TEXT CHECK (species IN ('cat', 'dog')),
-    model_version TEXT,
-    embedding     BLOB,
-    pet_id        TEXT REFERENCES pets (id) ON DELETE SET NULL,
-    not_a_pet     INTEGER NOT NULL DEFAULT 0 CHECK (not_a_pet IN (0, 1)),
-    CHECK (not_a_pet = 0 OR (species IS NULL AND embedding IS NULL AND pet_id IS NULL AND model_version IS NULL)),
+    id             TEXT PRIMARY KEY,
+    photo_sha256   TEXT NOT NULL,
+    box_x          REAL NOT NULL,
+    box_y          REAL NOT NULL,
+    box_width      REAL NOT NULL,
+    box_height     REAL NOT NULL,
+    species        TEXT CHECK (species IN ('cat', 'dog')),
+    model_version  TEXT,
+    embedding      BLOB,
+    pet_id         TEXT REFERENCES pets (id) ON DELETE SET NULL,
+    not_a_pet      INTEGER NOT NULL DEFAULT 0 CHECK (not_a_pet IN (0, 1)),
+    unknown_pet_id INTEGER REFERENCES unknown_pets (id) ON DELETE SET NULL,
+    CHECK (not_a_pet = 0 OR (species IS NULL AND embedding IS NULL AND pet_id IS NULL AND model_version IS NULL AND unknown_pet_id IS NULL)),
     CHECK (not_a_pet = 1 OR (species IS NOT NULL AND embedding IS NOT NULL AND model_version IS NOT NULL))
   );
   CREATE INDEX IF NOT EXISTS animals_by_photo ON animals (photo_sha256);
@@ -65,7 +75,13 @@ export type PetStore = ReturnType<typeof petStore>;
  */
 const INHERIT_IOU = 0.5;
 
-type EmbeddingRow = { id: string; embedding: Uint8Array; model_version: string | null; pet_id: string | null };
+type EmbeddingRow = {
+  id: string;
+  embedding: Uint8Array;
+  model_version: string | null;
+  pet_id: string | null;
+  unknown_pet_id: number | null;
+};
 type NamedRow = { photo_sha256: string; embedding: Uint8Array; pet_id: string; pet_name: string };
 
 type AnimalRow = {
@@ -78,6 +94,9 @@ type AnimalRow = {
   pet_id: string | null;
   pet_name: string | null;
   not_a_pet: number;
+  unknown_pet_id: number | null;
+  /** How many Photos the unnamed Animals of its Unknown pet span. */
+  unknown_pet_photos: number;
 };
 
 /**
@@ -86,9 +105,18 @@ type AnimalRow = {
  */
 export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T) {
   db.exec(SCHEMA);
+  // faces.db files made before Unknown pets lack the column (and so its CHECK).
+  const columns = db.prepare("PRAGMA table_info(animals)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "unknown_pet_id")) {
+    db.exec("ALTER TABLE animals ADD COLUMN unknown_pet_id INTEGER REFERENCES unknown_pets (id) ON DELETE SET NULL");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS animals_by_unknown_pet ON animals (unknown_pet_id)");
 
   const animalsOfPhotoQuery = db.prepare(`
-    SELECT animals.id, box_x, box_y, box_width, box_height, species, pet_id, not_a_pet, pets.name AS pet_name
+    SELECT animals.id, box_x, box_y, box_width, box_height, species, pet_id, not_a_pet, unknown_pet_id,
+           pets.name AS pet_name,
+           (SELECT COUNT(DISTINCT member.photo_sha256) FROM animals AS member
+            WHERE member.unknown_pet_id = animals.unknown_pet_id AND member.pet_id IS NULL) AS unknown_pet_photos
     FROM animals LEFT JOIN pets ON pets.id = animals.pet_id
     WHERE photo_sha256 = ?
     ORDER BY box_x`);
@@ -99,7 +127,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const findAnimal = db.prepare("SELECT not_a_pet FROM animals WHERE id = ?");
   const setPetOfAnimal = db.prepare("UPDATE animals SET pet_id = ? WHERE id = ?");
   const markNotAPet = db.prepare(
-    "UPDATE animals SET not_a_pet = 1, species = NULL, embedding = NULL, pet_id = NULL, model_version = NULL WHERE id = ?",
+    `UPDATE animals SET not_a_pet = 1, species = NULL, embedding = NULL, pet_id = NULL, model_version = NULL, unknown_pet_id = NULL
+     WHERE id = ?`,
   );
   const findPetByName = db.prepare("SELECT id, name FROM pets WHERE name = ?");
   const insertPet = db.prepare("INSERT INTO pets (id, name) VALUES (?, ?)");
@@ -119,7 +148,16 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     FROM animals JOIN pets ON pets.id = animals.pet_id
     WHERE model_version = ?`);
   const embeddingsOfPhoto = db.prepare(
-    "SELECT id, embedding, model_version, pet_id FROM animals WHERE photo_sha256 = ? AND embedding IS NOT NULL",
+    "SELECT id, embedding, model_version, pet_id, unknown_pet_id FROM animals WHERE photo_sha256 = ? AND embedding IS NOT NULL",
+  );
+  // The unnamed Animals of every Unknown pet, for Animals looking for one to join.
+  const unknownPetMembers = db.prepare(`
+    SELECT photo_sha256, embedding, unknown_pet_id FROM animals
+    WHERE unknown_pet_id IS NOT NULL AND pet_id IS NULL AND model_version = ?`);
+  const newUnknownPet = db.prepare("INSERT INTO unknown_pets DEFAULT VALUES");
+  const setUnknownPetOfAnimal = db.prepare("UPDATE animals SET unknown_pet_id = ? WHERE id = ?");
+  const deleteEmptyUnknownPets = db.prepare(
+    "DELETE FROM unknown_pets WHERE id NOT IN (SELECT unknown_pet_id FROM animals WHERE unknown_pet_id IS NOT NULL)",
   );
   const rejectionsOfPhoto = db.prepare(`
     SELECT animal_id, rejected_pet_suggestions.pet_id
@@ -138,9 +176,46 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const isCurrent = ({ sha256, modelVersion }: PhotoKey) =>
     (modelVersionOfPhoto.get(sha256) as { model_version: string } | undefined)?.model_version === modelVersion;
 
-  /** The Animals of a stored Photo as the Analysis shows them. Call it inside a transaction. */
+  /**
+   * The Animals of a stored Photo as the Analysis shows them, after placing each
+   * unnamed Animal that has no Suggestion and no Unknown pet in one. Call it inside a transaction.
+   */
   function present(sha256: string): Animal[] {
-    return visible(rowsOf(sha256), suggestionsFor(sha256));
+    let suggestions = suggestionsFor(sha256);
+    if (joinUnknownPets(sha256, suggestions)) suggestions = suggestionsFor(sha256);
+    return visible(rowsOf(sha256), suggestions);
+  }
+
+  /**
+   * Places each unnamed Animal of a Photo that has no Suggestion and no Unknown
+   * pet: it joins the Unknown pet of its most similar unnamed Animal in another
+   * Photo, at or above UNKNOWN_PET_THRESHOLD, or starts a new one. Each Animal
+   * chooses on its own, so two Animals of one Photo may join the same Unknown
+   * pet. Unknown pets never merge. True when any Animal was placed.
+   */
+  function joinUnknownPets(sha256: string, suggestions: Map<string, PetRef>): boolean {
+    const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
+    const waiting = own.filter((a) => a.pet_id === null && a.unknown_pet_id === null && !suggestions.has(a.id));
+    const modelVersion = waiting[0]?.model_version;
+    if (modelVersion == null) return false;
+    const members = (
+      unknownPetMembers.all(modelVersion) as { photo_sha256: string; embedding: Uint8Array; unknown_pet_id: number }[]
+    )
+      .filter((m) => m.photo_sha256 !== sha256)
+      .map((m) => ({ unknownPetId: m.unknown_pet_id, embedding: embeddingOf(m.embedding) }));
+
+    for (const animal of waiting) {
+      const embedding = embeddingOf(animal.embedding);
+      let nearest: { unknownPetId: number; score: number } | undefined;
+      for (const member of members) {
+        const score = cosine(embedding, member.embedding);
+        if (score >= UNKNOWN_PET_THRESHOLD && score > (nearest?.score ?? -Infinity)) {
+          nearest = { unknownPetId: member.unknownPetId, score };
+        }
+      }
+      setUnknownPetOfAnimal.run(nearest?.unknownPetId ?? newUnknownPet.run().lastInsertRowid, animal.id);
+    }
+    return true;
   }
 
   /**
@@ -229,6 +304,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         // A Photo without Animals keeps nothing, not even its hash, so it is detected on every open.
         if (detected.length > 0) setModelVersionOfPhoto.run(photo.sha256, photo.modelVersion);
         else forgetPhoto.run(photo.sha256);
+        deleteEmptyUnknownPets.run();
         return present(photo.sha256);
       });
     },
@@ -281,6 +357,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
       return transaction(() => {
         const marked = markNotAPet.run(animalId).changes > 0;
         forgetRejections.run(animalId);
+        deleteEmptyUnknownPets.run();
         return marked;
       });
     },
@@ -316,11 +393,13 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     /** Deletes a Pet; its Animals stay stored, unnamed. False when there is no such Pet. */
     deletePet: (petId: string): boolean => transaction(() => deletePet.run(petId).changes > 0),
 
-    /** Deletes every Animal and Pet. Call it inside the face store's transaction. */
+    /** Deletes every Animal, Pet and Unknown pet. Call it inside the face store's transaction. */
     deleteAllRows() {
       db.exec("DELETE FROM animals");
       db.exec("DELETE FROM pets");
       db.exec("DELETE FROM animal_photos");
+      // AUTOINCREMENT's counter survives, so Unknown pet numbers are never reused (spec #20).
+      db.exec("DELETE FROM unknown_pets");
     },
   };
 
@@ -333,7 +412,10 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   }
 }
 
-/** Each Animal shows at most one of its Pet or its Suggestion. */
+/** An Unknown pet's label shows once its unnamed Animals span this many Photos. */
+const UNKNOWN_PET_LABEL_PHOTOS = 2;
+
+/** Each Animal shows at most one of its Pet, its Suggestion, or its Unknown pet's label. */
 function visible(rows: AnimalRow[], suggestions: Map<string, PetRef>): Animal[] {
   return rows
     .filter((r) => r.not_a_pet === 0)
@@ -342,6 +424,9 @@ function visible(rows: AnimalRow[], suggestions: Map<string, PetRef>): Animal[] 
       const suggestion = suggestions.get(r.id);
       if (r.pet_id !== null && r.pet_name !== null) animal.pet = { id: r.pet_id, name: r.pet_name };
       else if (suggestion) animal.suggestion = suggestion;
+      else if (r.unknown_pet_id !== null && r.unknown_pet_photos >= UNKNOWN_PET_LABEL_PHOTOS) {
+        animal.unknownPet = { label: `Unknown pet ${r.unknown_pet_id}`, photoCount: r.unknown_pet_photos };
+      }
       return animal;
     });
 }
