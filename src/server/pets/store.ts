@@ -71,7 +71,7 @@ export type PetStore = ReturnType<typeof petStore>;
 
 /**
  * A detected Animal whose box overlaps an old one by at least this IoU inherits
- * its Pet or "Not a pet" mark.
+ * its Pet or "Not a pet" mark, and its rejected Suggestions.
  */
 const INHERIT_IOU = 0.5;
 
