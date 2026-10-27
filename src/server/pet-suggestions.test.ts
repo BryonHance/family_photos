@@ -34,6 +34,20 @@ const unknownPetLabels = (animals: { unknownPet?: { label: string; photoCount: n
 
 const suggestedNames =(animals: { suggestion?: { name: string } }[]) => animals.map((animal) => animal.suggestion?.name);
 
+/** As `animalsWith`, for the real face models finding a Photo's Faces. */
+const facesWith = (...vectors: Record<number, number>[]): FaceDetector => ({
+  modelVersion: faceDetector.modelVersion,
+  detect: async (photo) => {
+    const faces = (await faceDetector.detect(photo)).sort((a, b) => a.box.x - b.box.x);
+    return faces.map((face, i) => {
+      const embedding = new Float32Array(512);
+      for (const [axis, weight] of Object.entries(vectors[i] ?? { [100 + i]: 1 })) embedding[Number(axis)] = weight;
+      const length = Math.hypot(...embedding);
+      return { ...face, embedding: embedding.map((v) => v / length) };
+    });
+  },
+});
+
 /**
  * The real pet models finding a Photo's Animals and their species, standing in
  * an embedding for each, left to right: `vectors[i]` maps axes to weights, made
@@ -144,6 +158,23 @@ describe("Suggestions", () => {
 
     expect(cat!.species).toBe("cat");
     expect(cat!.suggestion).toEqual(rex);
+  });
+
+  it("never suggests a Pet for a Face, nor a Person for an Animal", async () => {
+    // Max is a Person on axis 0 and Rex a Pet on axis 1. In person-and-dog.jpg the
+    // Face is more like Rex than Max, and the Animal more like Max than Rex.
+    const [neil] = (await api.upload("crew.jpg", { detector: facesWith({ 0: 1 }) })).faces;
+    const max = await api.nameFace(neil!.id, "Max");
+    const [dog] = (await api.upload("dog.jpg", { animals: animalsWith({ 1: 1 }) })).animals;
+    const rex = await api.nameAnimal(dog!.id, "Rex");
+
+    const { faces, animals } = await api.upload("person-and-dog.jpg", {
+      detector: facesWith({ 0: 0.66, 1: 0.75, 2: 0.04 }),
+      animals: animalsWith({ 0: 0.72, 1: 0.69, 3: 0.07 }),
+    });
+
+    expect(faces[0]!.suggestion).toEqual(max);
+    expect(animals[0]!.suggestion).toEqual(rex);
   });
 
   it("refuses to confirm or reject for an unknown Animal or Pet, or for a Person", async () => {
