@@ -126,6 +126,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     FROM rejected_pet_suggestions JOIN animals ON animals.id = rejected_pet_suggestions.animal_id
     WHERE photo_sha256 = ?`);
   const rejectSuggestion = db.prepare("INSERT OR IGNORE INTO rejected_pet_suggestions (animal_id, pet_id) VALUES (?, ?)");
+  const forgetRejections = db.prepare("DELETE FROM rejected_pet_suggestions WHERE animal_id = ?");
   const photoOfAnimal = db.prepare("SELECT photo_sha256 FROM animals WHERE id = ? AND not_a_pet = 0");
 
   const modelVersionOfPhoto = db.prepare("SELECT model_version FROM animal_photos WHERE sha256 = ?");
@@ -178,8 +179,8 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
      * The Animals of a Photo, left to right, without those marked "Not a pet".
      * A Photo stored under the same pet model version returns its stored Animals
      * and `detect` is not called. Otherwise `detect` runs and its Animals replace
-     * any stored ones, each inheriting the Pet or "Not a pet" mark of an old
-     * Animal whose box it mostly overlaps.
+     * any stored ones, each inheriting the Pet or "Not a pet" mark, and the
+     * rejected Suggestions, of an old Animal whose box it mostly overlaps.
      */
     async animalsOfPhoto(photo: PhotoKey, detect: () => Promise<NewAnimal[]>): Promise<Animal[]> {
       if (isCurrent(photo)) return transaction(() => present(photo.sha256));
@@ -188,12 +189,14 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         // Another request for the same Photo may have stored it while this one was detecting.
         if (isCurrent(photo)) return present(photo.sha256);
         const heirs = heirsOf(rowsOf(photo.sha256), boxOf, detected.map((animal) => animal.box), INHERIT_IOU);
+        const rejections = rejectionsOfPhoto.all(photo.sha256) as { animal_id: string; pet_id: string }[];
         deleteAnimalsOfPhoto.run(photo.sha256);
         detected.forEach((animal, i) => {
           const from = heirs[i];
           const notAPet = from?.not_a_pet === 1;
+          const id = randomUUID();
           insertAnimal.run(
-            randomUUID(),
+            id,
             photo.sha256,
             animal.box.x,
             animal.box.y,
@@ -205,6 +208,9 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
             notAPet ? null : (from?.pet_id ?? null),
             notAPet ? 1 : 0,
           );
+          if (from && !notAPet) {
+            for (const r of rejections) if (r.animal_id === from.id) rejectSuggestion.run(id, r.pet_id);
+          }
         });
         // A Photo without Animals keeps nothing, not even its hash, so it is detected on every open.
         if (detected.length > 0) setModelVersionOfPhoto.run(photo.sha256, photo.modelVersion);
@@ -257,7 +263,13 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
      * Marks an Animal "Not a pet":it keeps only its box and the Photo's hash,
      * and stays hidden whenever the Photo is reopened. False when there is no such Animal.
      */
-    markNotAPet: (animalId: string): boolean => transaction(() => markNotAPet.run(animalId).changes > 0),
+    markNotAPet(animalId: string): boolean {
+      return transaction(() => {
+        const marked = markNotAPet.run(animalId).changes > 0;
+        forgetRejections.run(animalId);
+        return marked;
+      });
+    },
 
     /** Every Pet, by name, with how many Animals are named as them. */
     pets: () => listPets.all() as PetSummary[],

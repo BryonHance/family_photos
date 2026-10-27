@@ -180,15 +180,20 @@ describe("Pet names and People's names", () => {
 describe('"Not a pet"', () => {
   it("hides the Animal on reopening and keeps only its box and the Photo hash, with no embedding", async () => {
     const [cat, dog] = (await api.upload("cat-and-dog.jpg")).animals;
+    const [alone] = (await api.upload("cat.jpg")).animals;
+    const nellie = await api.nameAnimal(alone!.id, "Nellie");
+    await api.rejectPetSuggestion(cat!.id, nellie.id);
     const tom = await api.nameAnimal(cat!.id, "Tom");
 
     await api.markNotAPet(cat!.id);
 
     expect((await api.upload("cat-and-dog.jpg")).animals.map((animal) => animal.id)).toEqual([dog!.id]);
     const rows = api.storedRows()["animals"]!;
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     const dismissed = rows.find((row) => row["id"] === cat!.id)!;
     expect(dismissed).toMatchObject({ embedding: null, species: null, pet_id: null, model_version: null, not_a_pet: 1 });
+    // Nor any rejected Suggestion.
+    expect(api.storedRows()["rejected_pet_suggestions"]!.filter((row) => row["animal_id"] === cat!.id)).toEqual([]);
     expect(dismissed["photo_sha256"]).toMatch(/^[0-9a-f]{64}$/);
     expect([dismissed["box_x"], dismissed["box_y"], dismissed["box_width"], dismissed["box_height"]]).toEqual([
       cat!.box.x,
@@ -196,7 +201,10 @@ describe('"Not a pet"', () => {
       cat!.box.width,
       cat!.box.height,
     ]);
-    expect(await api.pets()).toEqual([{ id: tom.id, name: "Tom", animalCount: 0 }]);
+    expect((await api.pets()).map(({ name, animalCount }) => [name, animalCount])).toEqual([
+      ["Nellie", 1],
+      ["Tom", 0],
+    ]);
   });
 
   it("cannot then be named", async () => {
@@ -234,6 +242,18 @@ describe("a Photo stored under an older pet model version", () => {
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row["model_version"]).filter((v) => v !== null)).toEqual([api.animalDetector.modelVersion]);
     expect((await api.upload("cat-and-dog.jpg")).animals).toEqual(reopened);
+  });
+
+  it("carries a rejected Suggestion over to the new Animal that mostly overlaps the old one", async () => {
+    const [cat] = (await api.upload("cat.jpg")).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    const [old] = (await api.upload("cat-and-dog.jpg", { animals: olderPetModel(0.1) })).animals;
+    await api.rejectPetSuggestion(old!.id, tom.id);
+
+    const [reopened] = (await api.upload("cat-and-dog.jpg")).animals;
+
+    expect(reopened!.id).not.toBe(old!.id);
+    expect(reopened!.suggestion).toBeUndefined();
   });
 
   it("leaves a new Animal unnamed when no old box mostly overlaps it", async () => {
