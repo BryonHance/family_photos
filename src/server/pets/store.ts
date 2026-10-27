@@ -3,6 +3,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Animal, Box, PetRef, PetSummary, Species } from "../../shared/analysis.ts";
 import type { PhotoKey } from "../faces/store.ts";
 import { heirsOf } from "../faces/overlap.ts";
+import { cosine, embeddingOf } from "../faces/similarity.ts";
+import { SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
  * Pet data, kept in faces.db beside face data so that the same delete wipes it
@@ -58,6 +60,9 @@ export type PetStore = ReturnType<typeof petStore>;
  */
 const INHERIT_IOU = 0.5;
 
+type EmbeddingRow = { id: string; embedding: Uint8Array; model_version: string | null; pet_id: string | null };
+type NamedRow = { photo_sha256: string; embedding: Uint8Array; pet_id: string; pet_name: string };
+
 type AnimalRow = {
   id: string;
   box_x: number;
@@ -103,6 +108,15 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     FROM pets LEFT JOIN animals ON animals.pet_id = pets.id
     GROUP BY pets.id
     ORDER BY pets.name`);
+  // Every named Animal's embedding, for Suggestions: a plain scan, never mixed with Faces (spec #20).
+  const namedAnimals = db.prepare(`
+    SELECT photo_sha256, embedding, pet_id, pets.name AS pet_name
+    FROM animals JOIN pets ON pets.id = animals.pet_id
+    WHERE model_version = ?`);
+  const embeddingsOfPhoto = db.prepare(
+    "SELECT id, embedding, model_version, pet_id FROM animals WHERE photo_sha256 = ? AND embedding IS NOT NULL",
+  );
+
   const modelVersionOfPhoto = db.prepare("SELECT model_version FROM animal_photos WHERE sha256 = ?");
   const setModelVersionOfPhoto = db.prepare("INSERT OR REPLACE INTO animal_photos (sha256, model_version) VALUES (?, ?)");
   const forgetPhoto = db.prepare("DELETE FROM animal_photos WHERE sha256 = ?");
@@ -111,6 +125,37 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   /** True when these pet models last read the Photo, and it has stored Animals. */
   const isCurrent = ({ sha256, modelVersion }: PhotoKey) =>
     (modelVersionOfPhoto.get(sha256) as { model_version: string } | undefined)?.model_version === modelVersion;
+
+  /** The Animals of a stored Photo as the Analysis shows them. Call it inside a transaction. */
+  function present(sha256: string): Animal[] {
+    return visible(rowsOf(sha256), suggestionsFor(sha256));
+  }
+
+  /**
+   * Each unnamed Animal's Suggestion: the Pet of its nearest named Animal in
+   * another Photo, at or above SUGGESTION_THRESHOLD. Species does not limit it.
+   */
+  function suggestionsFor(sha256: string): Map<string, PetRef> {
+    const own = embeddingsOfPhoto.all(sha256) as EmbeddingRow[];
+    const modelVersion = own[0]?.model_version;
+    const unnamed = own.filter((animal) => animal.pet_id === null);
+    const suggestions = new Map<string, PetRef>();
+    if (modelVersion == null || unnamed.length === 0) return suggestions;
+    const named = (namedAnimals.all(modelVersion) as NamedRow[])
+      .filter((row) => row.photo_sha256 !== sha256)
+      .map((row) => ({ pet: { id: row.pet_id, name: row.pet_name }, embedding: embeddingOf(row.embedding) }));
+
+    for (const animal of unnamed) {
+      const embedding = embeddingOf(animal.embedding);
+      let nearest: { pet: PetRef; score: number } | undefined;
+      for (const candidate of named) {
+        const score = cosine(embedding, candidate.embedding);
+        if (score >= SUGGESTION_THRESHOLD && score > (nearest?.score ?? -Infinity)) nearest = { pet: candidate.pet, score };
+      }
+      if (nearest) suggestions.set(animal.id, nearest.pet);
+    }
+    return suggestions;
+  }
 
   return {
     /**
@@ -121,11 +166,11 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
      * Animal whose box it mostly overlaps.
      */
     async animalsOfPhoto(photo: PhotoKey, detect: () => Promise<NewAnimal[]>): Promise<Animal[]> {
-      if (isCurrent(photo)) return visible(rowsOf(photo.sha256));
+      if (isCurrent(photo)) return transaction(() => present(photo.sha256));
       const detected = await detect();
       return transaction(() => {
         // Another request for the same Photo may have stored it while this one was detecting.
-        if (isCurrent(photo)) return visible(rowsOf(photo.sha256));
+        if (isCurrent(photo)) return present(photo.sha256);
         const heirs = heirsOf(rowsOf(photo.sha256), boxOf, detected.map((animal) => animal.box), INHERIT_IOU);
         deleteAnimalsOfPhoto.run(photo.sha256);
         detected.forEach((animal, i) => {
@@ -148,7 +193,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         // A Photo without Animals keeps nothing, not even its hash, so it is detected on every open.
         if (detected.length > 0) setModelVersionOfPhoto.run(photo.sha256, photo.modelVersion);
         else forgetPhoto.run(photo.sha256);
-        return visible(rowsOf(photo.sha256));
+        return present(photo.sha256);
       });
     },
 
@@ -221,12 +266,15 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   }
 }
 
-function visible(rows: AnimalRow[]): Animal[] {
+/** Each Animal shows at most one of its Pet or its Suggestion. */
+function visible(rows: AnimalRow[], suggestions: Map<string, PetRef>): Animal[] {
   return rows
     .filter((r) => r.not_a_pet === 0)
     .map((r) => {
       const animal: Animal = { id: r.id, species: r.species!, box: boxOf(r) };
+      const suggestion = suggestions.get(r.id);
       if (r.pet_id !== null && r.pet_name !== null) animal.pet = { id: r.pet_id, name: r.pet_name };
+      else if (suggestion) animal.suggestion = suggestion;
       return animal;
     });
 }
