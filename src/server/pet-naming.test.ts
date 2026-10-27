@@ -109,6 +109,30 @@ describe("Pets", () => {
     expect(await api.pets()).toEqual([{ id: rex.id, name: "Rex", animalCount: 1 }]);
     expect(await api.people()).toEqual([{ id: grandpa.id, name: "Grandpa", faceCount: 1 }]);
   });
+
+  it("deletes a Pet, leaving its Animals stored and unnamed", async () => {
+    const { cat, dog } = await nameCatAndDog("Tom", "Rex");
+
+    await api.deletePet(cat.id);
+
+    expect(await reopenedNames()).toEqual([undefined, "Rex"]);
+    expect(api.storedRows()["animals"]).toHaveLength(2);
+    expect(await api.pets()).toEqual([{ id: dog.id, name: "Rex", animalCount: 1 }]);
+    expect((await api.call("DELETE", `/api/pets/${cat.id}`)).status).toBe(404);
+  });
+
+  it("keeps a Pet whose Animals are all in old Photos listed, and named in those Photos", async () => {
+    // Nellie, a cat who has died, was named in one old Photo; the Photos opened since show only the dog.
+    const [old] = (await api.upload("cat.jpg")).animals;
+    const nellie = await api.nameAnimal(old!.id, "Nellie");
+    for (let i = 0; i < 3; i++) {
+      const [dog] = (await api.upload("person-and-dog.jpg")).animals;
+      await api.nameAnimal(dog!.id, "Rex");
+    }
+
+    expect(await api.pets()).toContainEqual({ id: nellie.id, name: "Nellie", animalCount: 1 });
+    expect((await api.upload("cat.jpg")).animals.map((animal) => animal.pet)).toEqual([nellie]);
+  });
 });
 
 describe("reopening a Photo", () => {

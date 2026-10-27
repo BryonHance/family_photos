@@ -96,6 +96,7 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
   const findPet = db.prepare("SELECT id, name FROM pets WHERE id = ?");
   const renamePet = db.prepare("UPDATE pets SET name = ? WHERE id = ?");
   const movePetAnimals = db.prepare("UPDATE animals SET pet_id = ? WHERE pet_id = ?");
+  // Its Animals are left unnamed by ON DELETE SET NULL.
   const deletePet = db.prepare("DELETE FROM pets WHERE id = ?");
   const listPets = db.prepare(`
     SELECT pets.id, pets.name, COUNT(animals.id) AS animalCount
@@ -199,6 +200,9 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
         return "merged";
       });
     },
+
+    /** Deletes a Pet; its Animals stay stored, unnamed. False when there is no such Pet. */
+    deletePet: (petId: string): boolean => transaction(() => deletePet.run(petId).changes > 0),
 
     /** Deletes every Animal and Pet. Call it inside the face store's transaction. */
     deleteAllRows() {

@@ -4,8 +4,9 @@ import { fieldIn, nameIn } from "../faces/api.ts";
 import type { PetStore } from "./store.ts";
 
 /**
- * Naming Animals and listing Pets, apart from the face routes: a Pet's name is
- * never offered for a Face, nor a Person's for an Animal. Animals themselves
+ * Naming Animals and managing Pets, apart from the face routes: a Pet's name is
+ * never offered for a Face, nor a Person's for an Animal, and a Pet never
+ * merges with a Person. Animals themselves
  * come back from /api/analyze, with the ids these routes take.
  */
 export function petRoutes(store: PetStore) {
@@ -46,6 +47,8 @@ export function petRoutes(store: PetStore) {
     if (result === "no-pet") return noSuchPet(c);
     return c.body(null, 204);
   });
+
+  app.delete("/pets/:id", (c) => (store.deletePet(c.req.param("id")) ? c.body(null, 204) : noSuchPet(c)));
 
   return app;
 }
