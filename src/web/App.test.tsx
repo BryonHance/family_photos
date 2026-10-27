@@ -526,6 +526,76 @@ it("shows no Faces heading, toggle or boxes when a Photo has no Faces", async ()
   expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
 });
 
+const withFacesAndAnimals: Analysis = {
+  ...withFaces,
+  animals: [
+    { species: "dog", box: { x: 0.3, y: 0.4, width: 0.25, height: 0.5 } },
+    { species: "cat", box: { x: 0.7, y: 0.5, width: 0.2, height: 0.3 } },
+  ],
+};
+
+async function open(opened: Analysis) {
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json(opened));
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  await screen.findByRole("img", { name: "beach.jpg" });
+}
+
+it("draws a box over the preview for each Animal, labelled with its species and styled apart from Face boxes", async () => {
+  await open(withFacesAndAnimals);
+
+  const boxes = within(screen.getByRole("list", { name: "Animal boxes" })).getAllByRole("listitem");
+  expect(boxes.map((box) => box.textContent)).toEqual(["dog", "cat"]);
+  expect(boxes[0]).toHaveStyle({ left: "30%", top: "40%", width: "25%", height: "50%" });
+  expect(boxes[1]).toHaveStyle({ left: "70%", top: "50%", width: "20%", height: "30%" });
+  const faceBox = within(screen.getByRole("list", { name: "Face boxes" })).getAllByRole("listitem")[0]!;
+  expect(boxes[0]!.className).not.toBe(faceBox.className);
+});
+
+it("heads the Animals with their count beside the Faces, above the Summary", async () => {
+  await open(withFacesAndAnimals);
+
+  const faces = screen.getByRole("region", { name: "Faces (2)" });
+  const pets = screen.getByRole("region", { name: "Pets (2)" });
+  const summary = screen.getByRole("region", { name: "Summary" });
+  expect(faces.compareDocumentPosition(pets) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(pets.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("hides Face and Animal boxes alike when Show boxes is turned off", async () => {
+  await open(withFacesAndAnimals);
+  expect(screen.getAllByRole("checkbox", { name: "Show boxes" })).toHaveLength(1);
+
+  await userEvent.click(screen.getByRole("checkbox", { name: "Show boxes" }));
+
+  expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Animal boxes" })).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("checkbox", { name: "Show boxes" }));
+
+  expect(screen.getByRole("list", { name: "Face boxes" })).toBeInTheDocument();
+  expect(screen.getByRole("list", { name: "Animal boxes" })).toBeInTheDocument();
+});
+
+it("offers Show boxes under the Pets heading when a Photo has Animals but no Faces", async () => {
+  await open({ ...withFacesAndAnimals, faces: [] });
+
+  expect(screen.queryByRole("region", { name: /faces/i })).not.toBeInTheDocument();
+  const toggle = within(screen.getByRole("region", { name: "Pets (2)" })).getByRole("checkbox", { name: "Show boxes" });
+
+  await userEvent.click(toggle);
+
+  expect(screen.queryByRole("list", { name: "Animal boxes" })).not.toBeInTheDocument();
+});
+
+it("shows nothing about pets when a Photo has no Animals", async () => {
+  await openPhotoWithFaces();
+
+  expect(screen.getByRole("region", { name: "Faces (2)" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: /pets/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Animal boxes" })).not.toBeInTheDocument();
+});
+
 /**
  * Stands in for the server's face routes, keeping People in memory, and records
  * every request so tests can check what the viewer sent.

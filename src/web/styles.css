@@ -106,6 +106,37 @@ body {
   background: #d4d4d4;
 }
 
+/* Animal boxes are cyan with rounded corners, apart from the yellow Face boxes, and labelled with the species. */
+.animal-boxes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.animal-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #22d3ee;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
+  pointer-events: none;
+}
+
+.animal-species {
+  position: absolute;
+  top: -2px;
+  left: 6px;
+  transform: translateY(-100%);
+  padding: 0 0.3em;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #000;
+  background: #22d3ee;
+  border-radius: 2px 2px 0 0;
+}
+
 /* ✓ and ✕ sit above the box's top right corner, beside its number. */
 .suggestion-actions {
   position: absolute;
@@ -133,7 +164,8 @@ body {
   outline: 3px solid #fff;
 }
 
-.faces {
+.faces,
+.pets {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -141,7 +173,8 @@ body {
   gap: 0 1rem;
 }
 
-.faces h2 {
+.faces h2,
+.pets h2 {
   margin: 0.5rem 0;
 }
 

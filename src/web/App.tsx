@@ -13,6 +13,7 @@ import type {
 import { faceApi, messageOf } from "./faceApi.ts";
 import { FaceBoxes, FacesSection } from "./faces.tsx";
 import { PeoplePanel, type PeopleChange } from "./people.tsx";
+import { AnimalBoxes, PetsSection } from "./pets.tsx";
 
 type Opened = { analysis: Analysis; previewUrl: string };
 
@@ -244,6 +245,17 @@ export function App() {
                 />
               )
             }
+            pets={
+              state.analysis.animals.length > 0 && (
+                <PetsSection
+                  animals={state.analysis.animals}
+                  // "Show boxes" sits under the Faces heading when there is one.
+                  toggle={
+                    state.analysis.faces.length === 0 ? { showBoxes, onShowBoxesChange: setShowBoxes } : undefined
+                  }
+                />
+              )
+            }
           />
         )}
       </div>
@@ -251,23 +263,27 @@ export function App() {
   );
 }
 
-/** The panel for an opened Photo: Warnings, Faces, Summary, the filter box, then its Sections. */
+/** The panel for an opened Photo: Warnings, Faces, Pets, Summary, the filter box, then its Sections. */
 function OpenedPhotoPanel({
   analysis,
   filter,
   onFilterChange,
   faces,
+  pets,
 }: {
   analysis: Analysis;
   filter: string;
   onFilterChange: (filter: string) => void;
   /** The Faces section, when the Photo has any. */
   faces: ReactNode;
+  /** The Pets section, when the Photo has any Animals. */
+  pets: ReactNode;
 }) {
   return (
     <>
       {analysis.warnings.length > 0 && <Warnings warnings={analysis.warnings} />}
       {faces}
+      {pets}
       <SummaryCard summary={analysis.summary} />
       <input
         type="search"
@@ -299,7 +315,7 @@ function PhotoPreview({
   onConfirmSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
   onRejectSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
 }) {
-  const { preview, photo, faces } = analysis;
+  const { preview, photo, faces, animals } = analysis;
   const framed = (src: string) => (
     <div className="preview-frame">
       <img src={src} alt={photo.name} />
@@ -312,6 +328,7 @@ function PhotoPreview({
           onReject={onRejectSuggestion}
         />
       )}
+      {showBoxes && animals.length > 0 && <AnimalBoxes animals={animals} />}
     </div>
   );
   switch (preview.kind) {
