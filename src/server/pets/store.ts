@@ -395,6 +395,18 @@ export function petStore(db: DatabaseSync, transaction: <T>(work: () => T) => T)
     },
 
     /**
+     * The Animals of the Photo this Animal is in, as reopening the Photo would
+     * show them now, such as after a Pet is merged or deleted. "no-animal" when
+     * there is no such Animal, or it is marked "Not a pet".
+     */
+    animalsOfPhotoOf(animalId: string): Animal[] | "no-animal" {
+      return transaction(() => {
+        const photo = photoOfAnimal.get(animalId) as { photo_sha256: string } | undefined;
+        return photo ? present(photo.photo_sha256) : "no-animal";
+      });
+    },
+
+    /**
      * Names an Animal: the Pet with this name, ignoring case, or a new Pet. Only
      * Pets are looked at, never People. "no-animal" when there is no such
      * Animal, or it is marked "Not a pet".

@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import type { PetRef, PetSummary } from "../../shared/analysis.ts";
+import type { Animal, PetRef, PetSummary } from "../../shared/analysis.ts";
 import { fieldIn, nameIn } from "../recognition/request.ts";
 import type { PetStore } from "./store.ts";
 
@@ -16,6 +16,12 @@ export function petRoutes(store: PetStore) {
   const noSuchAnimal = (c: Context) => problem(c, 404, "This Animal is no longer stored. Open the Photo again.");
   const noSuchPet = (c: Context) => problem(c, 404, "There is no such Pet.");
   const noName = (c: Context) => problem(c, 400, "Give a name.");
+
+  // The opened Photo's Animals after a change in the People and pets panel.
+  app.get("/animals/:id/photo", (c) => {
+    const animals = store.animalsOfPhotoOf(c.req.param("id"));
+    return animals === "no-animal" ? noSuchAnimal(c) : c.json<{ animals: Animal[] }>({ animals });
+  });
 
   app.put("/animals/:id/pet", async (c) => {
     const name = await nameIn(c);

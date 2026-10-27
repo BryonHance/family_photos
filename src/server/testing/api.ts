@@ -91,6 +91,8 @@ export async function openApi({
     /** Returns the Face as it now stands. */
     rejectSuggestion: (faceId: string, personId: string) =>
       json<Face>(call("POST", `/api/faces/${faceId}/suggestion/reject`, { personId })),
+    /** The Faces of the Photo a Face is in, as they now stand. */
+    facesOfPhotoOf: async (faceId: string) => (await json<{ faces: Face[] }>(call("GET", `/api/faces/${faceId}/photo`))).faces,
     markNotAFace: async (faceId: string) => expect((await call("POST", `/api/faces/${faceId}/not-a-face`)).status).toBe(204),
     people: async () => (await json<{ people: PersonSummary[] }>(call("GET", "/api/people"))).people,
     renamePerson: (personId: string, name: string) =>
@@ -104,6 +106,9 @@ export async function openApi({
     /** Returns the Animal as it now stands. */
     rejectPetSuggestion: (animalId: string, petId: string) =>
       json<Animal>(call("POST", `/api/animals/${animalId}/suggestion/reject`, { petId })),
+    /** The Animals of the Photo an Animal is in, as they now stand. */
+    animalsOfPhotoOf: async (animalId: string) =>
+      (await json<{ animals: Animal[] }>(call("GET", `/api/animals/${animalId}/photo`))).animals,
     markNotAPet: async (animalId: string) =>
       expect((await call("POST", `/api/animals/${animalId}/not-a-pet`)).status).toBe(204),
     pets: async () => (await json<{ pets: PetSummary[] }>(call("GET", "/api/pets"))).pets,

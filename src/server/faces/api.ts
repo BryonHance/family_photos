@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import type { PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import type { Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
 import { fieldIn, nameIn } from "../recognition/request.ts";
 import type { FaceStore } from "./store.ts";
 
@@ -14,6 +14,12 @@ export function faceRoutes(store: FaceStore) {
   const noSuchFace = (c: Context) => problem(c, 404, "This Face is no longer stored. Open the Photo again.");
   const noSuchPerson = (c: Context) => problem(c, 404, "There is no such Person.");
   const noName = (c: Context) => problem(c, 400, "Give a name.");
+
+  // The opened Photo's Faces after a change in the People and pets panel.
+  app.get("/faces/:id/photo", (c) => {
+    const faces = store.facesOfPhotoOf(c.req.param("id"));
+    return faces === "no-face" ? noSuchFace(c) : c.json<{ faces: Face[] }>({ faces });
+  });
 
   app.put("/faces/:id/person", async (c) => {
     const name = await nameIn(c);

@@ -198,6 +198,21 @@ describe("Strangers", () => {
     expect(twice[1]!.stranger).toEqual(twice[0]!.stranger);
   });
 
+  it("gives the Faces of a Photo as they now stand, by one of its Faces, such as after their Person is deleted", async () => {
+    await api.upload("crew.jpg");
+    const [first] = (await api.upload("crew-rotated.jpg")).faces;
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    await api.confirmSuggestion(first!.id, neil.id);
+
+    await api.deletePerson(neil.id);
+
+    const now = await api.facesOfPhotoOf(armstrong!.id);
+    expect(now[0]!.stranger?.photoCount).toBe(2);
+    expect(now).toEqual((await api.upload("crew.jpg")).faces);
+    expect((await api.call("GET", "/api/faces/no-such-face/photo")).status).toBe(404);
+  });
+
   it("the Faces of a deleted Person join a Stranger again, under a number never used before", async () => {
     await api.upload("crew.jpg");
     const before = (await api.upload("crew-rotated.jpg")).faces;

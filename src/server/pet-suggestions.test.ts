@@ -241,6 +241,21 @@ describe("Unknown pets", () => {
     expect(both[1]!.unknownPet).toEqual(both[0]!.unknownPet);
   });
 
+  it("gives the Animals of a Photo as they now stand, by one of its Animals, such as after their Pet is deleted", async () => {
+    await api.upload("cat.jpg");
+    const [beside] = (await api.upload("cat-and-dog.jpg")).animals;
+    const [cat] = (await api.upload("cat.jpg")).animals;
+    const tom = await api.nameAnimal(cat!.id, "Tom");
+    await api.confirmPetSuggestion(beside!.id, tom.id);
+
+    await api.deletePet(tom.id);
+
+    const now = await api.animalsOfPhotoOf(cat!.id);
+    expect(now[0]!.unknownPet?.photoCount).toBe(2);
+    expect(now).toEqual((await api.upload("cat.jpg")).animals);
+    expect((await api.call("GET", "/api/animals/no-such-animal/photo")).status).toBe(404);
+  });
+
   it("the Animals of a deleted Pet join an Unknown pet again, under a number never used before", async () => {
     await api.upload("cat.jpg");
     const [before] = (await api.upload("cat-and-dog.jpg")).animals;

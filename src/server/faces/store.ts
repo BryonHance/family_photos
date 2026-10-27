@@ -407,6 +407,18 @@ export function openFaceStore(path: string) {
     },
 
     /**
+     * The Faces of the Photo this Face is in, as reopening the Photo would show
+     * them now, such as after a Person is merged or deleted. "no-face" when
+     * there is no such Face, or it is marked "Not a face".
+     */
+    facesOfPhotoOf(faceId: string): Face[] | "no-face" {
+      return transaction(() => {
+        const photo = photoOfFace.get(faceId) as { photo_sha256: string } | undefined;
+        return photo ? present(photo.photo_sha256) : "no-face";
+      });
+    },
+
+    /**
      * Names a Face: the Person with this name, ignoring case and spaces around
      * it, or a new Person. "no-face" when there is no such Face, or it is marked "Not a face".
      */
