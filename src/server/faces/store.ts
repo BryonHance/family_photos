@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Box, Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
-import { iou } from "./overlap.ts";
+import { petStore } from "../pets/store.ts";
+import { heirsOf } from "./overlap.ts";
 import { cosine } from "./similarity.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "./thresholds.ts";
 
 /**
- * faces.db holds face data and nothing else (ADR-0002): per Face, its box, the
- * Photo's SHA-256, the model version, its embedding and its Person or "Not a
- * face" mark; and each Person's name. Never the Photo, its name, or any image
- * of a Face. Kept in its own file so it can be wiped in one step and kept out
- * of off-server backups.
+ * faces.db holds face data (ADR-0002) and pet data (ADR-0003, in
+ * ../pets/store.ts) and nothing else: per Face, its box, the Photo's SHA-256,
+ * the model version, its embedding and its Person or "Not a face" mark; and
+ * each Person's name. Never the Photo, its name, or any image of a Face. Kept in
+ * its own file so it can be wiped in one step and kept out of off-server backups.
  *
  * A Face marked "Not a face" keeps only its box and the Photo's hash: its
  * embedding, Person, Stranger, model version and rejected Suggestions are cleared.
@@ -309,7 +310,12 @@ export function openFaceStore(path: string) {
     }
   }
 
+  const pets = petStore(db, transaction);
+
   return {
+    /** The pet half of the store: Animals and Pets, apart from Faces and People. */
+    pets,
+
     /**
      * The Faces of a Photo, left to right, without those marked "Not a face".
      * A Photo stored under the same model version returns its stored Faces and
@@ -324,7 +330,7 @@ export function openFaceStore(path: string) {
         // Another request for the same Photo may have stored it while this one was detecting.
         if (isCurrent(photo)) return present(photo.sha256);
         const old = rowsOf(photo.sha256);
-        const heirs = inheritMarks(old, detected);
+        const heirs = heirsOf(old, boxOf, detected.map((face) => face.box), INHERIT_IOU);
         const rejections = rejectionsOfPhoto.all(photo.sha256) as { face_id: string; person_id: string }[];
         deleteFacesOfPhoto.run(photo.sha256);
         detected.forEach((face, i) => {
@@ -450,11 +456,12 @@ export function openFaceStore(path: string) {
     },
 
     /**
-     * Deletes every Face and Person, then rewrites the file so that no deleted
-     * embedding lingers in its free pages or its write-ahead log.
+     * Deletes every Face, Person, Animal and Pet, then rewrites the file so that
+     * no deleted embedding lingers in its free pages or its write-ahead log.
      */
-    deleteAllFaceData() {
+    deleteAllFaceAndPetData() {
       transaction(() => {
+        pets.deleteAllRows();
         db.exec("DELETE FROM faces");
         db.exec("DELETE FROM people");
         db.exec("DELETE FROM photos");
@@ -507,22 +514,3 @@ function pairSet<A, B>(pairs: Iterable<readonly [A, B]>) {
 const embeddingOf = (blob: Uint8Array) => new Float32Array(new Uint8Array(blob).buffer);
 
 const boxOf = (r: FaceRow): Box => ({ x: r.box_x, y: r.box_y, width: r.box_width, height: r.box_height });
-
-/**
- * For each detected Face, the old Face it inherits from: the pairs that overlap
- * most are matched first, and each old Face passes its mark to one new Face at most.
- */
-function inheritMarks(old: FaceRow[], detected: NewFace[]): (FaceRow | undefined)[] {
-  const pairs = detected
-    .flatMap((face, i) => old.map((row) => ({ i, row, overlap: iou(face.box, boxOf(row)) })))
-    .filter((p) => p.overlap >= INHERIT_IOU)
-    .sort((a, b) => b.overlap - a.overlap);
-  const heirs: (FaceRow | undefined)[] = detected.map(() => undefined);
-  const used = new Set<string>();
-  for (const { i, row } of pairs) {
-    if (heirs[i] || used.has(row.id)) continue;
-    heirs[i] = row;
-    used.add(row.id);
-  }
-  return heirs;
-}

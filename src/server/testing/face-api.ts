@@ -1,12 +1,12 @@
-// A harness for API-seam tests that send a sequence of uploads and face-naming
-// requests to one app, backed by its own faces.db in a fresh temporary directory.
+// A harness for API-seam tests that send a sequence of uploads and face- and
+// pet-naming requests to one app, backed by its own faces.db in a fresh temporary directory.
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ExifTool } from "exiftool-vendored";
 import { expect } from "vitest";
-import type { Analysis, Face, PersonSummary } from "../../shared/analysis.ts";
+import type { Analysis, Face, PersonSummary, PetRef, PetSummary } from "../../shared/analysis.ts";
 import { createApp } from "../app.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import { openFaceStore } from "../faces/store.ts";
@@ -15,15 +15,15 @@ import { loadAnimalDetector, type AnimalDetector } from "../pets/detector.ts";
 export const modelsDir = join(import.meta.dirname, "../../../models");
 export const fixture = (name: string) => join(import.meta.dirname, "../../../fixtures", name);
 
-/** D-FINE-S, loaded once for every harness. */
+/** D-FINE-S and the Avito model, loaded once for every harness. */
 let sharedAnimalDetector: Promise<AnimalDetector> | undefined;
 
 export type FaceApi = Awaited<ReturnType<typeof openFaceApi>>;
 
 /**
  * One app with its own faces.db. Every request goes through `createApp`, as in
- * production. `upload` takes another detector to stand in for an older or newer
- * model (for example `{ ...faceDetector, modelVersion: "old" }`).
+ * production. `upload` takes another face or animal detector to stand in for an
+ * older or newer model (for example `{ ...faceDetector, modelVersion: "old" }`).
  */
 export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTool; faceDetector: FaceDetector }) {
   const dir = await mkdtemp(join(tmpdir(), "family-photos-faces-"));
@@ -33,8 +33,8 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
   const faceStore = openFaceStore(dbPath);
   // Every Photo is searched for cats and dogs too, as in production.
   const animalDetector = await (sharedAnimalDetector ??= loadAnimalDetector(modelsDir));
-  const app = (detector: FaceDetector) =>
-    createApp({ exiftool, tempDir, faceDetector: detector, faceStore, animalDetector, maxUploadBytes: 5 * 1024 * 1024 });
+  const app = (detector: FaceDetector, animals = animalDetector) =>
+    createApp({ exiftool, tempDir, faceDetector: detector, faceStore, animalDetector: animals, maxUploadBytes: 5 * 1024 * 1024 });
 
   async function call(method: string, path: string, body?: unknown, detector = faceDetector) {
     return app(detector).request(path, {
@@ -57,11 +57,17 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
     call,
 
     /** Uploads a fixture Photo and returns its Analysis. */
-    async upload(fixtureName: string, { detector = faceDetector }: { detector?: FaceDetector } = {}) {
+    async upload(
+      fixtureName: string,
+      { detector = faceDetector, animals = animalDetector }: { detector?: FaceDetector; animals?: AnimalDetector } = {},
+    ) {
       const form = new FormData();
       form.append("photo", new File([await readFile(fixture(fixtureName))], fixtureName));
-      return json<Analysis>(app(detector).request("/api/analyze", { method: "POST", body: form }));
+      return json<Analysis>(app(detector, animals).request("/api/analyze", { method: "POST", body: form }));
     },
+
+    /** The real D-FINE-S and Avito models, for standing in for another version of them. */
+    animalDetector,
 
     nameFace: (faceId: string, name: string) =>
       json<{ id: string; name: string }>(call("PUT", `/api/faces/${faceId}/person`, { name })),
@@ -77,11 +83,15 @@ export async function openFaceApi({ exiftool, faceDetector }: { exiftool: ExifTo
     mergePeople: async (personId: string, intoPersonId: string) =>
       expect((await call("POST", `/api/people/${personId}/merge`, { into: intoPersonId })).status).toBe(204),
     deletePerson: async (personId: string) => expect((await call("DELETE", `/api/people/${personId}`)).status).toBe(204),
-    deleteAllFaceData: async () => expect((await call("DELETE", "/api/face-data")).status).toBe(204),
+    nameAnimal: (animalId: string, name: string) => json<PetRef>(call("PUT", `/api/animals/${animalId}/pet`, { name })),
+    markNotAPet: async (animalId: string) =>
+      expect((await call("POST", `/api/animals/${animalId}/not-a-pet`)).status).toBe(204),
+    pets: async () => (await json<{ pets: PetSummary[] }>(call("GET", "/api/pets"))).pets,
+    deleteAllFaceAndPetData: async () => expect((await call("DELETE", "/api/face-and-pet-data")).status).toBe(204),
 
     /**
      * Every row of faces.db, read straight from the file. Only for checking what
-     * ADR-0002 allows to be kept; behaviour is tested through the API.
+     * ADR-0002 and ADR-0003 allow to be kept; behaviour is tested through the API.
      */
     storedRows() {
       const db = new DatabaseSync(dbPath, { readOnly: true });

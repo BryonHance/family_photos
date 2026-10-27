@@ -28,9 +28,12 @@ export type AnalyzerConfig = {
   tempDir: string;
   /** Finds the Faces in each Photo and computes their embeddings. */
   faceDetector: FaceDetector;
-  /** Keeps each Face's box, embedding and Person, by the Photo's hash, and never the Photo (ADR-0002). */
+  /**
+   * Keeps each Face's box, embedding and Person, and each Animal's box,
+   * species, embedding and Pet, by the Photo's hash, and never the Photo (ADR-0002, ADR-0003).
+   */
   faceStore: FaceStore;
-  /** Finds the cats and dogs in each Photo. */
+  /** Finds the cats and dogs in each Photo and computes their embeddings. */
   animalDetector: AnimalDetector;
 };
 
@@ -183,6 +186,7 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
       })
     : undefined;
   const upright = await decodeUprightPhoto(photoMimeType, photo.bytes, uprightHeic);
+  const sha256 = createHash("sha256").update(photo.bytes).digest("hex");
 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: photoMimeType },
@@ -190,8 +194,8 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     warnings: deriveWarnings(tags, sections, photo.lastModified),
     summary: summarize(tags),
     sections,
-    faces: await findFaces(config, photo.bytes, upright),
-    animals: upright ? await findAnimals(config, upright) : [],
+    faces: await findFaces(config, sha256, upright),
+    animals: await findAnimals(config, sha256, upright),
   };
 }
 
@@ -219,19 +223,28 @@ async function decodeUprightPhoto(
 /** A Photo seen before, under the same model version, returns its stored Faces without being detected again. */
 async function findFaces(
   { faceDetector, faceStore }: AnalyzerConfig,
-  bytes: Uint8Array,
+  sha256: string,
   upright: Pixels<3> | undefined,
 ): Promise<Face[]> {
   if (!upright) return [];
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
   return faceStore.facesOfPhoto({ sha256, modelVersion: faceDetector.modelVersion }, async () =>
     (await faceDetector.detect({ kind: "raw", ...upright })).map(({ box, embedding }) => ({ box, embedding })),
   );
 }
 
-/** The Animals as the Analysis shows them: species and box, nothing stored yet. */
-async function findAnimals({ animalDetector }: AnalyzerConfig, upright: Pixels<3>): Promise<Animal[]> {
-  return (await animalDetector.detect(upright)).map(({ species, box }) => ({ species, box }));
+/**
+ * A Photo seen before, under the same pet model version, returns its stored
+ * Animals without being detected again. Faces and Animals follow their own model versions.
+ */
+async function findAnimals(
+  { animalDetector, faceStore }: AnalyzerConfig,
+  sha256: string,
+  upright: Pixels<3> | undefined,
+): Promise<Animal[]> {
+  if (!upright) return [];
+  return faceStore.pets.animalsOfPhoto({ sha256, modelVersion: animalDetector.modelVersion }, async () =>
+    (await animalDetector.detect(upright)).map(({ species, box, embedding }) => ({ species, box, embedding })),
+  );
 }
 
 /**

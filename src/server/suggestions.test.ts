@@ -167,11 +167,11 @@ describe("Strangers", () => {
     expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
   });
 
-  it('never reuses a Stranger number, even after "Delete all face data"', async () => {
+  it('never reuses a Stranger number, even after "Delete all face and pet data"', async () => {
     await api.upload("crew.jpg");
     const before = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
 
-    await api.deleteAllFaceData();
+    await api.deleteAllFaceAndPetData();
 
     await api.upload("crew.jpg");
     const after = strangerLabels((await api.upload("crew-rotated.jpg")).faces);

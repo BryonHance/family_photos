@@ -529,8 +529,8 @@ it("shows no Faces heading, toggle or boxes when a Photo has no Faces", async ()
 const withFacesAndAnimals: Analysis = {
   ...withFaces,
   animals: [
-    { species: "dog", box: { x: 0.3, y: 0.4, width: 0.25, height: 0.5 } },
-    { species: "cat", box: { x: 0.7, y: 0.5, width: 0.2, height: 0.3 } },
+    { id: "animal-a", species: "dog", box: { x: 0.3, y: 0.4, width: 0.25, height: 0.5 } },
+    { id: "animal-b", species: "cat", box: { x: 0.7, y: 0.5, width: 0.2, height: 0.3 } },
   ],
 };
 

@@ -151,13 +151,13 @@ describe("People", () => {
     expect((await api.call("DELETE", `/api/people/${collins.id}`)).status).toBe(404);
   });
 
-  it('"Delete all face data" leaves faces.db empty', async () => {
+  it('"Delete all face and pet data" leaves faces.db empty', async () => {
     const faces = (await api.upload("crew.jpg")).faces;
     await api.nameFace(faces[0]!.id, "Neil");
     await api.markNotAFace(faces[1]!.id);
     await api.rejectSuggestion(faces[2]!.id, (await api.nameFace(faces[2]!.id, "Buzz")).id);
 
-    await api.deleteAllFaceData();
+    await api.deleteAllFaceAndPetData();
 
     const tables = api.storedRows();
     expect(Object.keys(tables)).toEqual(expect.arrayContaining(["people", "faces", "rejected_suggestions"]));
@@ -248,8 +248,11 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
       expect((row["embedding"] as Uint8Array).byteLength).toBe(512 * 4);
     }
     // A Stranger is only a number, a rejected Suggestion only a pair of ids, and
-    // a Photo only its hash and the version of the models that read it.
-    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "photos", "rejected_suggestions", "strangers"]);
+    // a Photo only its hash and the version of the models that read it. Pet data
+    // has its own tables (pet-naming.test.ts) and nothing else is kept.
+    expect(Object.keys(api.storedRows()).sort()).toEqual(
+      ["animal_photos", "animals", "faces", "people", "pets", "photos", "rejected_suggestions", "strangers"],
+    );
     for (const row of api.storedRows()["strangers"]!) expect(Object.keys(row)).toEqual(["id"]);
     for (const row of api.storedRows()["photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
   });

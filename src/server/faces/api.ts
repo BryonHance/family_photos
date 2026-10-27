@@ -64,8 +64,9 @@ export function faceRoutes(store: FaceStore) {
 
   app.delete("/people/:id", (c) => (store.deletePerson(c.req.param("id")) ? c.body(null, 204) : noSuchPerson(c)));
 
-  app.delete("/face-data", (c) => {
-    store.deleteAllFaceData();
+  // Face and pet data go together (ADR-0003).
+  app.delete("/face-and-pet-data", (c) => {
+    store.deleteAllFaceAndPetData();
     return c.body(null, 204);
   });
 
@@ -73,13 +74,13 @@ export function faceRoutes(store: FaceStore) {
 }
 
 /** One field of a JSON body, of whatever type; undefined when the body is not a JSON object or lacks it. */
-async function fieldIn(c: Context, field: string): Promise<unknown> {
+export async function fieldIn(c: Context, field: string): Promise<unknown> {
   const body: unknown = await c.req.json().catch(() => undefined);
   return typeof body === "object" && body !== null && field in body ? (body as Record<string, unknown>)[field] : undefined;
 }
 
 /** The `name` of a JSON body, without spaces around it; undefined when there is none. */
-async function nameIn(c: Context): Promise<string | undefined> {
+export async function nameIn(c: Context): Promise<string | undefined> {
   const name = await fieldIn(c, "name");
   return typeof name === "string" && name.trim() !== "" ? name.trim() : undefined;
 }

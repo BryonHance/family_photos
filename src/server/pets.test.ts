@@ -72,19 +72,19 @@ const DOG_IN_CROP = [
 ];
 
 function expectOneCat(analysis: Analysis) {
-  expect(analysis.animals).toEqual([{ species: "cat", box: expect.any(Object) }]);
+  expect(analysis.animals).toEqual([{ id: expect.any(String), species: "cat", box: expect.any(Object) }]);
   expectBoxAround(analysis.animals[0]!.box, CAT);
 }
 
 describe("Animals", () => {
-  it("boxes a cat in a JPEG, with its species and box only", async () => {
+  it("boxes a cat in a JPEG, with its id, species and box only", async () => {
     expectOneCat(await analyze("cat.jpg"));
   });
 
   it("boxes a dog in a JPEG", async () => {
     const { animals } = await analyze("dog.jpg");
 
-    expect(animals).toEqual([{ species: "dog", box: expect.any(Object) }]);
+    expect(animals).toEqual([{ id: expect.any(String), species: "dog", box: expect.any(Object) }]);
     expectBoxAround(animals[0]!.box, DOG_IN_CROP);
   });
 

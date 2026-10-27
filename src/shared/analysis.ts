@@ -63,11 +63,23 @@ export type StrangerRef = { label: string; photoCount: number };
 /** What the viewer took an Animal for. A hint for the user, not a fact about a Pet. */
 export type Species = "cat" | "dog";
 
-/** A region of the Photo that shows one cat or dog, its whole body (GLOSSARY.md). */
+/** A Pet as an Animal refers to them. */
+export type PetRef = { id: string; name: string };
+
+/**
+ * A region of the Photo that shows one cat or dog, its whole body (GLOSSARY.md),
+ * stored so that it can be named (ADR-0003).
+ */
 export type Animal = {
+  id: string;
   species: Species;
   box: Box;
+  /** Present once the Animal is named. */
+  pet?: PetRef;
 };
+
+/** A Pet as the panel lists them. */
+export type PetSummary = PetRef & { animalCount: number };
 
 /** A Person as the People panel lists them. */
 export type PersonSummary = PersonRef & { faceCount: number };
@@ -80,7 +92,10 @@ export type Analysis = {
   sections: Section[];
   /** Ordered left to right. Empty when there are none, and for TIFF and RAW. Faces marked "Not a face" are left out. */
   faces: Face[];
-  /** Cats and dogs, ordered left to right. Empty when there are none, and for TIFF and RAW. */
+  /**
+   * Cats and dogs, ordered left to right. Empty when there are none, and for
+   * TIFF and RAW. Animals marked "Not a pet" are left out.
+   */
   animals: Animal[];
 };
 
