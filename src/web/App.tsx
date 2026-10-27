@@ -7,6 +7,7 @@ import type {
   Field,
   PersonRef,
   PersonSummary,
+  PetRef,
   PetSummary,
   Section,
   Summary,
@@ -92,11 +93,48 @@ export function App() {
     void refreshPets();
   }
 
+  /** Shows an Animal as named, and no other Animal of the Photo as suggested to be the same Pet. */
+  function showNamedAnimal(animalId: string, pet: PetRef) {
+    updateAnimals((animals) =>
+      animals.map((animal) =>
+        animal.id === animalId
+          ? { id: animal.id, species: animal.species, box: animal.box, pet }
+          : animal.suggestion?.id === pet.id
+            ? { id: animal.id, species: animal.species, box: animal.box }
+            : animal,
+      ),
+    );
+  }
+
   async function nameAnimal(animalId: string, name: string) {
     const pet = await petApi.nameAnimal(animalId, name);
-    updateAnimals((animals) => animals.map((animal) => (animal.id === animalId ? { ...animal, pet } : animal)));
+    showNamedAnimal(animalId, pet);
     setSelectedAnimalId(undefined);
     await refreshPets();
+  }
+
+  // Why the last ✓ or ✕ on an Animal failed, if it did.
+  const [petSuggestionProblem, setPetSuggestionProblem] = useState<string>();
+
+  async function confirmPetSuggestion(animalId: string, suggested: PetRef) {
+    setPetSuggestionProblem(undefined);
+    try {
+      showNamedAnimal(animalId, await petApi.confirmSuggestion(animalId, suggested.id));
+    } catch (failure) {
+      setPetSuggestionProblem(messageOf(failure));
+      return;
+    }
+    await refreshPets();
+  }
+
+  async function rejectPetSuggestion(animalId: string, suggested: PetRef) {
+    setPetSuggestionProblem(undefined);
+    try {
+      const updated = await petApi.rejectSuggestion(animalId, suggested.id);
+      updateAnimals((animals) => animals.map((animal) => (animal.id === animalId ? updated : animal)));
+    } catch (failure) {
+      setPetSuggestionProblem(messageOf(failure));
+    }
   }
 
   async function markNotAPet(animalId: string) {
@@ -188,9 +226,14 @@ export function App() {
       }),
     );
     updateAnimals((animals) =>
-      animals.map(({ pet, ...animal }) => {
+      animals.map(({ pet, suggestion, ...animal }) => {
         const nextPet = afterChange("pet", pet);
-        return { ...animal, ...(nextPet && { pet: nextPet }) };
+        const nextSuggestion = afterChange("pet", suggestion);
+        return {
+          ...animal,
+          ...(nextPet && { pet: nextPet }),
+          ...(nextSuggestion && { suggestion: nextSuggestion }),
+        };
       }),
     );
     // Deleting all face data deletes all pet data too (ADR-0003).
@@ -205,6 +248,7 @@ export function App() {
     setSelectedFaceId(undefined);
     setSelectedAnimalId(undefined);
     setSuggestionProblem(undefined);
+    setPetSuggestionProblem(undefined);
     setState({ status: "analyzing", photoName: photo.name });
     let next: ViewerState;
     try {
@@ -254,6 +298,8 @@ export function App() {
             onRejectSuggestion={rejectSuggestion}
             selectedAnimalId={selectedAnimalId}
             onSelectAnimal={selectAnimal}
+            onConfirmPetSuggestion={confirmPetSuggestion}
+            onRejectPetSuggestion={rejectPetSuggestion}
           />
         ) : (
           <p className="hint">Drop a Photo here</p>
@@ -317,6 +363,7 @@ export function App() {
                   onName={nameAnimal}
                   onNotAPet={markNotAPet}
                   onClose={() => setSelectedAnimalId(undefined)}
+                  suggestionProblem={petSuggestionProblem}
                 />
               )
             }
@@ -374,6 +421,8 @@ function PhotoPreview({
   onRejectSuggestion,
   selectedAnimalId,
   onSelectAnimal,
+  onConfirmPetSuggestion,
+  onRejectPetSuggestion,
 }: Opened & {
   showBoxes: boolean;
   selectedFaceId: string | undefined;
@@ -382,6 +431,8 @@ function PhotoPreview({
   onRejectSuggestion: (faceId: string, person: PersonRef) => Promise<void>;
   selectedAnimalId: string | undefined;
   onSelectAnimal: (animalId: string) => void;
+  onConfirmPetSuggestion: (animalId: string, pet: PetRef) => Promise<void>;
+  onRejectPetSuggestion: (animalId: string, pet: PetRef) => Promise<void>;
 }) {
   const { preview, photo, faces, animals } = analysis;
   const framed = (src: string) => (
@@ -397,7 +448,13 @@ function PhotoPreview({
         />
       )}
       {showBoxes && animals.length > 0 && (
-        <AnimalBoxes animals={animals} selectedAnimalId={selectedAnimalId} onSelect={onSelectAnimal} />
+        <AnimalBoxes
+          animals={animals}
+          selectedAnimalId={selectedAnimalId}
+          onSelect={onSelectAnimal}
+          onConfirm={onConfirmPetSuggestion}
+          onReject={onRejectPetSuggestion}
+        />
       )}
     </div>
   );

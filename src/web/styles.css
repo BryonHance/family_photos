@@ -164,7 +164,25 @@ body {
   border-radius: 0 0 2px 2px;
 }
 
-/* ✓ and ✕ sit above the box's top right corner, beside its number. */
+/* As for Faces: a Suggestion is dashed until it is confirmed; an Unknown pet's Animals are grey. */
+.animal-box.suggested {
+  border-style: dashed;
+}
+
+.animal-box.suggested .animal-name {
+  font-style: italic;
+}
+
+.animal-box.unknown-pet {
+  border-color: #d4d4d4;
+}
+
+.animal-box.unknown-pet .animal-species,
+.animal-box.unknown-pet .animal-name {
+  background: #d4d4d4;
+}
+
+/* ✓ and ✕ sit above the box's top right corner, beside its number or species. */
 .suggestion-actions {
   position: absolute;
   top: -2px;

@@ -90,8 +90,8 @@ export function FaceBoxes({
             </button>
             {who.state === "suggested" && (
               <SuggestionButtons
-                number={i + 1}
-                person={who.person}
+                subject={`Face ${i + 1}`}
+                suggested={who.person}
                 onConfirm={() => onConfirm(face.id, who.person)}
                 onReject={() => onReject(face.id, who.person)}
               />
@@ -103,15 +103,16 @@ export function FaceBoxes({
   );
 }
 
-/** ✓ and ✕ for a Suggestion. */
-function SuggestionButtons({
-  number,
-  person,
+/** ✓ and ✕ for a Suggestion of a Person for a Face, or of a Pet for an Animal. */
+export function SuggestionButtons({
+  subject,
+  suggested,
   onConfirm,
   onReject,
 }: {
-  number: number;
-  person: PersonRef;
+  /** What the Suggestion is for, such as "Face 2" or "Animal 1". */
+  subject: string;
+  suggested: { name: string };
   onConfirm: () => Promise<void>;
   onReject: () => Promise<void>;
 }) {
@@ -128,8 +129,8 @@ function SuggestionButtons({
     <span className="suggestion-actions">
       <button
         type="button"
-        aria-label={`✓ Face ${number} is ${person.name}`}
-        title={`Yes, this is ${person.name}`}
+        aria-label={`✓ ${subject} is ${suggested.name}`}
+        title={`Yes, this is ${suggested.name}`}
         disabled={busy}
         onClick={() => void run(onConfirm)}
       >
@@ -137,8 +138,8 @@ function SuggestionButtons({
       </button>
       <button
         type="button"
-        aria-label={`✕ Face ${number} is not ${person.name}`}
-        title={`No, this is not ${person.name}`}
+        aria-label={`✕ ${subject} is not ${suggested.name}`}
+        title={`No, this is not ${suggested.name}`}
         disabled={busy}
         onClick={() => void run(onReject)}
       >

@@ -620,6 +620,15 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = [], pets: Pe
       return Response.json({ id: pet.id, name: pet.name });
     }
     if (route(/^\/api\/animals\/(.+)\/not-a-pet$/, "POST")) return new Response(null, { status: 204 });
+    if ((match = route(/^\/api\/animals\/(.+)\/suggestion\/confirm$/, "POST"))) {
+      const pet = pets.find((p) => p.id === body!["petId"])!;
+      pet.animalCount++;
+      return Response.json({ id: pet.id, name: pet.name });
+    }
+    if ((match = route(/^\/api\/animals\/(.+)\/suggestion\/reject$/, "POST"))) {
+      const { suggestion: _rejected, ...animal } = opened.animals.find((a) => a.id === match![1])!;
+      return Response.json(animal);
+    }
     if ((match = route(/^\/api\/faces\/(.+)\/person$/, "PUT"))) {
       let person = people.find((p) => p.name.toLowerCase() === body!["name"]!.toLowerCase());
       if (!person) people = [...people, (person = { id: `person-${nextId++}`, name: body!["name"]!, faceCount: 0 })];
@@ -1114,4 +1123,81 @@ it("shows the server's message when a Pet can't be renamed", async () => {
 
   expect(await within(panel).findByRole("alert")).toHaveTextContent("A Pet is already called Maxine. Merge them instead.");
   expect(animalBox("Animal 1: Rex (dog)")).toBeInTheDocument();
+});
+
+/** Left to right: a dog in an Unknown pet, Rex the dog, and a cat suggested as Maxine. */
+const crewWithPetSuggestion: Analysis = {
+  ...crewWithPets,
+  animals: [
+    {
+      id: "animal-c",
+      species: "dog",
+      box: { x: 0.05, y: 0.7, width: 0.15, height: 0.2 },
+      unknownPet: { label: "Unknown pet 2", photoCount: 5 },
+    },
+    crewWithPets.animals[0]!,
+    { ...crewWithPets.animals[1]!, suggestion: { id: "maxi", name: "Maxine" } },
+  ],
+};
+
+it("shows a Suggestion on its Animal's box, and ✓ names the Animal", async () => {
+  const server = fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+  expect(animalBox("Animal 3: Maxine? (cat, suggested)")).toHaveTextContent("Maxine?");
+
+  await userEvent.click(screen.getByRole("button", { name: "✓ Animal 3 is Maxine" }));
+
+  expect(server.requests).toContainEqual({
+    method: "POST",
+    url: "/api/animals/animal-b/suggestion/confirm",
+    body: { petId: "maxi" },
+  });
+  expect(await screen.findByRole("button", { name: "Animal 3: Maxine (cat)" })).toHaveTextContent("Maxine");
+  expect(screen.queryByRole("button", { name: /✓/ })).not.toBeInTheDocument();
+});
+
+it("✕ rejects a Pet Suggestion, leaving the Animal unnamed", async () => {
+  const server = fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(screen.getByRole("button", { name: "✕ Animal 3 is not Maxine" }));
+
+  expect(server.requests).toContainEqual({
+    method: "POST",
+    url: "/api/animals/animal-b/suggestion/reject",
+    body: { petId: "maxi" },
+  });
+  expect(await screen.findByRole("button", { name: "Animal 3: cat" })).not.toHaveTextContent("Maxine");
+  expect(screen.queryByRole("button", { name: /✕/ })).not.toBeInTheDocument();
+});
+
+it("labels an Animal in an Unknown pet with the Unknown pet and how many Photos it spans", async () => {
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+
+  expect(animalBox("Animal 1: Unknown pet 2, in 5 Photos (dog)")).toHaveTextContent("Unknown pet 2, in 5 Photos");
+});
+
+it("naming an Animal drops the same Suggestion from the Photo's other Animals", async () => {
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(animalBox("Animal 1: Unknown pet 2, in 5 Photos (dog)"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Maxine{Enter}");
+
+  expect(await screen.findByRole("button", { name: "Animal 1: Maxine (dog)" })).toBeInTheDocument();
+  expect(animalBox("Animal 3: cat")).not.toHaveTextContent("Maxine");
+});
+
+it("deleting a Pet drops its Suggestion from the opened Photo", async () => {
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeoplePanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Maxine")).getByRole("button", { name: "Delete Maxine" }));
+
+  expect(await screen.findByRole("button", { name: "Animal 3: cat" })).not.toHaveTextContent("Maxine");
+  expect(screen.queryByRole("button", { name: /✓/ })).not.toBeInTheDocument();
 });
