@@ -21,8 +21,17 @@ jobs:
           key: face-models-${{ hashFiles('src/server/faces/models.sha256') }}
       - uses: actions/cache@v4
         with:
-          path: models/pets
+          path: |
+            models/pets
+            !models/pets/avito_clip_l.onnx*
           key: pet-models-${{ hashFiles('src/server/pets/models.sha256') }}
+      # The exported Avito model, keyed by export-avito.py (which pins the
+      # revision) and the lock file (which pins PyTorch). On a miss, `pixi run
+      # models` exports it again; on a hit it only re-verifies the recorded SHA-256.
+      - uses: actions/cache@v4
+        with:
+          path: models/pets/avito_clip_l.onnx*
+          key: avito-model-${{ hashFiles('scripts/export-avito.py', 'pixi.lock') }}
       - run: pixi run models
       - run: pixi run typecheck
       - run: pixi run test
