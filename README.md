@@ -36,7 +36,7 @@ The Avito model was trained partly on [PetFace](https://github.com/mapooon/PetFa
 
 Everything the viewer remembers about Faces is in one SQLite file, `faces.db`: each Face's embedding (512 numbers computed from it) and box, the SHA-256 of the Photo it was found in, the model version, its Person or Stranger number, the Suggestions rejected for it, and the name of each Person. Embeddings of children's faces are biometric data, and a rough likeness of a face can be reconstructed from one.
 
-The same file holds pet data, with the same protection (ADR-0003): each Animal's embedding (768 numbers) and box, its species, the Photo's SHA-256, the pet model version, its Pet or "Not a pet" mark, and the name of each Pet. An Animal's box often takes in the child hugging the dog, so its embedding is partly computed from a child's face. The file holds nothing else: never a Photo or any image of a Face or Animal.
+The same file holds pet data, with the same protection (ADR-0003): each Animal's embedding (768 numbers) and box, its species, the Photo's SHA-256, the pet model version, its Pet, Unknown pet number or "Not a pet" mark, the Suggestions rejected for it, and the name of each Pet. An Animal's box often takes in the child hugging the dog, so its embedding is partly computed from a child's face. The file holds nothing else: never a Photo or any image of a Face or Animal.
 
 - In Docker, `faces.db` lives in the named volume `face-data`, mounted at `/app/data`. In development it is `data/faces.db`, which git ignores. Set `FACES_DB` to put it elsewhere.
 - **Keep the `face-data` volume out of every backup that leaves the server**, such as cloud or off-site backups. If the server is lost, open the Photos again to name each Person and Pet again.
@@ -51,6 +51,16 @@ pixi run similarity /path/to/sample
 ```
 
 It prints how similar Faces of the same person and of different people are, and what share of each pair lies above each threshold. It stores nothing and prints only numbers. Never commit the sample.
+
+### Tuning pet Suggestions and Unknown pets
+
+An Animal is suggested as a Pet when its embedding's cosine similarity to one of their named Animals is at least 0.65, and joins an Unknown pet at 0.70. Both come from a trial on 20 Photos of our five pets (`docs/research/face-and-pet-recognition.md` section 8) and are set in `src/server/pets/thresholds.ts`. To check them, put a sample of your own Photos in a folder outside the repository, one subfolder per pet, then run:
+
+```sh
+pixi run pet-trial /path/to/sample
+```
+
+It too stores nothing and prints only numbers. Never commit the sample.
 
 ## Deployment
 
