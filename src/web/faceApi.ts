@@ -10,6 +10,9 @@ export const faceApi = {
   /** Returns the Face as it now stands. */
   rejectSuggestion: async (faceId: string, personId: string) =>
     (await (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/suggestion/reject`, { personId })).json()) as Face,
+  /** The Faces of the Photo a Face is in, as the server now has them. */
+  facesOfPhotoOf: async (faceId: string) =>
+    ((await (await send("GET", `/api/faces/${encodeURIComponent(faceId)}/photo`)).json()) as { faces: Face[] }).faces,
   markNotAFace: async (faceId: string) => void (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/not-a-face`)),
   people: async () => ((await (await send("GET", "/api/people")).json()) as { people: PersonSummary[] }).people,
   renamePerson: async (personId: string, name: string) =>

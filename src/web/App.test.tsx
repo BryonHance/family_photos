@@ -599,10 +599,28 @@ it("shows nothing about pets when a Photo has no Animals", async () => {
 /**
  * Stands in for the server's face and pet routes, keeping People and Pets in
  * memory, and records every request so tests can check what the viewer sent.
+ * The opened Photo's stored Faces and Animals follow a rename, merge or delete
+ * in the plainest way, unless `afterChange` says how the server shows them.
  */
-function fakeFaceServer(opened: Analysis, people: PersonSummary[] = [], pets: PetSummary[] = []) {
+function fakeFaceServer(
+  opened: Analysis,
+  people: PersonSummary[] = [],
+  pets: PetSummary[] = [],
+  afterChange: Partial<Pick<Analysis, "faces" | "animals">> = {},
+) {
   const requests: { method: string; url: string; body?: unknown }[] = [];
   let nextId = 1;
+  let stored = { faces: opened.faces, animals: opened.animals };
+  /** Renames, merges or unnames a Person or Pet wherever the stored Photo shows them. */
+  const restore = (of: "person" | "pet", id: string, to: { id: string; name: string } | undefined) => {
+    const swap = <T extends { id: string }>(ref: T | undefined) => (ref?.id === id ? to : ref);
+    const tidy = <T extends object>(item: T) =>
+      Object.fromEntries(Object.entries(item).filter(([, value]) => value !== undefined)) as T;
+    stored =
+      of === "person"
+        ? { ...stored, faces: stored.faces.map((f) => tidy({ ...f, person: swap(f.person), suggestion: swap(f.suggestion) })) }
+        : { ...stored, animals: stored.animals.map((a) => tidy({ ...a, pet: swap(a.pet), suggestion: swap(a.suggestion) })) };
+  };
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -611,6 +629,8 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = [], pets: Pe
     const route = (pattern: RegExp, verb: string) => (method === verb ? url.match(pattern) : null);
     let match;
     if (url === "/api/analyze") return Response.json(opened);
+    if (route(/^\/api\/faces\/(.+)\/photo$/, "GET")) return Response.json({ faces: afterChange.faces ?? stored.faces });
+    if (route(/^\/api\/animals\/(.+)\/photo$/, "GET")) return Response.json({ animals: afterChange.animals ?? stored.animals });
     if (route(/^\/api\/people$/, "GET")) return Response.json({ people });
     if (route(/^\/api\/pets$/, "GET")) return Response.json({ pets });
     if ((match = route(/^\/api\/animals\/(.+)\/pet$/, "PUT"))) {
@@ -647,28 +667,36 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = [], pets: Pe
     }
     if ((match = route(/^\/api\/people\/([^/]+)$/, "PATCH"))) {
       people = people.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      restore("person", match[1]!, { id: match[1]!, name: body!["name"]! });
       return Response.json({ id: match[1], name: body!["name"] });
     }
     if ((match = route(/^\/api\/people\/([^/]+)\/merge$/, "POST"))) {
       const from = people.find((p) => p.id === match![1])!;
+      const into = people.find((p) => p.id === body!["into"])!;
+      restore("person", from.id, { id: into.id, name: into.name });
       people = people.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, faceCount: p.faceCount + from.faceCount } : p));
       return new Response(null, { status: 204 });
     }
     if ((match = route(/^\/api\/people\/([^/]+)$/, "DELETE"))) {
       people = people.filter((p) => p.id !== match![1]);
+      restore("person", match[1]!, undefined);
       return new Response(null, { status: 204 });
     }
     if ((match = route(/^\/api\/pets\/([^/]+)$/, "PATCH"))) {
       pets = pets.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      restore("pet", match[1]!, { id: match[1]!, name: body!["name"]! });
       return Response.json({ id: match[1], name: body!["name"] });
     }
     if ((match = route(/^\/api\/pets\/([^/]+)\/merge$/, "POST"))) {
       const from = pets.find((p) => p.id === match![1])!;
+      const into = pets.find((p) => p.id === body!["into"])!;
+      restore("pet", from.id, { id: into.id, name: into.name });
       pets = pets.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, animalCount: p.animalCount + from.animalCount } : p));
       return new Response(null, { status: 204 });
     }
     if ((match = route(/^\/api\/pets\/([^/]+)$/, "DELETE"))) {
       pets = pets.filter((p) => p.id !== match![1]);
+      restore("pet", match[1]!, undefined);
       return new Response(null, { status: 204 });
     }
     if (route(/^\/api\/face-and-pet-data$/, "DELETE")) {
@@ -1200,4 +1228,93 @@ it("deleting a Pet drops its Suggestion from the opened Photo", async () => {
 
   expect(await screen.findByRole("button", { name: "Animal 3: cat" })).not.toHaveTextContent("Maxine");
   expect(screen.queryByRole("button", { name: /✓/ })).not.toBeInTheDocument();
+});
+
+it("deleting a Pet shows its Animals as the server now has them, such as in an Unknown pet", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets(), {
+    animals: [
+      { ...crewWithPets.animals[0]!, pet: undefined, unknownPet: { label: "Unknown pet 9", photoCount: 4 } },
+      { ...crewWithPets.animals[1]!, suggestion: { id: "maxi", name: "Maxine" } },
+    ].map(({ pet: _pet, ...animal }) => animal),
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Rex");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
+
+  expect(await screen.findByRole("button", { name: "Animal 1: Unknown pet 9, in 4 Photos (dog)" })).toBeInTheDocument();
+  expect(animalBox("Animal 2: Maxine? (cat, suggested)")).toBeInTheDocument();
+});
+
+it("merging a Pet shows the opened Photo's Animals as the server now has them", async () => {
+  // Rex merges into Maxine: Animal 2 can no longer be suggested as Maxine, now named in the Photo.
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets(), {
+    animals: [
+      crewWithPetSuggestion.animals[0]!,
+      { ...crewWithPetSuggestion.animals[1]!, pet: { id: "maxi", name: "Maxine" } },
+      crewWithPets.animals[1]!,
+    ],
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Rex");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Merge Rex" }));
+  await userEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+
+  expect(await screen.findByRole("button", { name: "Animal 2: Maxine (dog)" })).toBeInTheDocument();
+  await waitFor(() => expect(animalBox("Animal 3: cat")).not.toHaveTextContent("Maxine"));
+});
+
+it("deleting a Person shows their Faces as the server now has them, such as in a Stranger", async () => {
+  fakeFaceServer(crew, crewPeople(), [], {
+    faces: [
+      { id: "face-a", box: crew.faces[0]!.box, stranger: { label: "Unknown 9", photoCount: 2 } },
+      crew.faces[1]!,
+      crew.faces[2]!,
+    ],
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Delete Neil" }));
+
+  expect(await screen.findByRole("button", { name: "Face 1: Unknown 9, in 2 Photos" })).toBeInTheDocument();
+});
+
+it("keeps a later Photo's Animals when the earlier Photo's state arrives after it is replaced", async () => {
+  const later: Analysis = {
+    ...analysis,
+    photo: { name: "garden.jpg", sizeBytes: 2000, mimeType: "image/jpeg" },
+    animals: [{ id: "animal-z", species: "cat", box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 } }],
+  };
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  let respond!: (res: Response) => void;
+  const fake = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    if (String(input) === "/api/animals/animal-a/photo") return new Promise((resolve) => (respond = resolve));
+    if (String(input) === "/api/analyze" && (init?.body as FormData).get("photo") instanceof File) {
+      const name = ((init?.body as FormData).get("photo") as File).name;
+      if (name === "garden.jpg") return Response.json(later);
+    }
+    return fake(input, init);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Rex");
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
+  await waitFor(() => expect(respond).toBeDefined());
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), new File(["jpeg"], "garden.jpg", { type: "image/jpeg" }));
+  await screen.findByRole("img", { name: "garden.jpg" });
+  respond(Response.json({ animals: crewWithPets.animals }));
+
+  await waitFor(() => expect(within(screen.getByRole("list", { name: "Animal boxes" })).getAllByRole("button")).toHaveLength(1));
+  expect(animalBox("Animal 1: cat")).toBeInTheDocument();
 });

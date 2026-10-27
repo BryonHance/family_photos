@@ -237,9 +237,36 @@ export function App() {
         };
       }),
     );
+    // A merge or delete can change more than names: a Face or Animal may join a
+    // Stranger or Unknown pet, or gain or lose a Suggestion. Ask the server.
+    if (change.kind === "merged" || change.kind === "deleted") void showStoredState(change.of);
     // Deleting all face data deletes all pet data too (ADR-0003).
     if (change.kind === "deleted-all" || change.of === "pet") void refreshPets();
     if (change.kind === "deleted-all" || change.of === "person") void refreshPeople();
+  }
+
+  /**
+   * Replaces the opened Photo's Faces (for a Person) or Animals (for a Pet) with
+   * those the server now stores for it. Kept only while the same Photo is open.
+   */
+  async function showStoredState(of: NamedKind) {
+    if (state.status !== "opened") return;
+    const items = of === "person" ? state.analysis.faces : state.analysis.animals;
+    const id = items[0]?.id;
+    if (id === undefined) return;
+    const stillOpen = (s: ViewerState): s is ViewerState & { status: "opened" } =>
+      s.status === "opened" && (of === "person" ? s.analysis.faces : s.analysis.animals).some((item) => item.id === id);
+    try {
+      if (of === "person") {
+        const faces = await faceApi.facesOfPhotoOf(id);
+        setState((s) => (stillOpen(s) ? { ...s, analysis: { ...s.analysis, faces } } : s));
+      } else {
+        const animals = await petApi.animalsOfPhotoOf(id);
+        setState((s) => (stillOpen(s) ? { ...s, analysis: { ...s.analysis, animals } } : s));
+      }
+    } catch {
+      // The names changed in place above still stand.
+    }
   }
 
   async function openPhoto(photo: File) {
