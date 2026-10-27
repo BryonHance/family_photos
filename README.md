@@ -26,7 +26,11 @@ Anyone forking this repository for another purpose must check the licence for th
 
 ## Pet models and their licence
 
-The viewer finds cats and dogs with [D-FINE-S](https://github.com/Peterande/D-FINE) trained on COCO, in onnx-community's [ONNX conversion](https://huggingface.co/onnx-community/dfine_s_coco-ONNX) at a pinned revision, run on the CPU with ONNX Runtime. It is Apache-2.0, unlike the face models, but it is still never committed: `pixi run models` downloads it into the git-ignored `models/pets/`, and the Docker build downloads it and checks its pinned SHA-256. Only the COCO-trained checkpoint is used; the Objects365 ones may not be cleared for use under the same licence. See `docs/research/face-and-pet-recognition.md` §6.
+The viewer finds cats and dogs with [D-FINE-S](https://github.com/Peterande/D-FINE) trained on COCO, in onnx-community's [ONNX conversion](https://huggingface.co/onnx-community/dfine_s_coco-ONNX) at a pinned revision, run on the CPU with ONNX Runtime. It is Apache-2.0, unlike the face models, but it is still never committed: `pixi run models` downloads it into the git-ignored `models/pets/`, and the Docker build downloads it and checks its pinned SHA-256. Only the COCO-trained checkpoint is used; the Objects365 ones may not be cleared for use under the same licence.
+
+The viewer tells individual cats and dogs apart with AvitoTech's [CLIP-L for animal identification](https://huggingface.co/AvitoTech/Zer0int-CLIP-L-for-animal-identification), also Apache-2.0, at a pinned revision. It has no ONNX release, so `pixi run models` and the Docker build download its weights, check their pinned SHA-256 and export the vision tower to ONNX with PyTorch (in a separate pixi environment and build stage, so PyTorch never reaches the app or the image). The build fails unless the export matches PyTorch, and the exported model's SHA-256 is recorded beside it for the server to check.
+
+The Avito model was trained partly on [PetFace](https://github.com/mapooon/PetFace), whose authors release it "for research purposes only". Whether those terms reach a model trained on it is unresolved. This private, non-commercial viewer is fine either way, but anyone publishing an image or using the model commercially must check for themselves. See `docs/research/face-and-pet-recognition.md` §6.
 
 ## Face data
 
