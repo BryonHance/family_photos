@@ -14,7 +14,7 @@ import type {
 } from "../shared/analysis.ts";
 import { faceApi, messageOf } from "./faceApi.ts";
 import { FaceBoxes, FacesSection } from "./faces.tsx";
-import { PeoplePanel, type PeopleChange } from "./people.tsx";
+import { PeoplePanel, type NamedKind, type PeopleChange } from "./people.tsx";
 import { petApi } from "./petApi.ts";
 import { AnimalBoxes, PetsSection } from "./pets.tsx";
 
@@ -59,7 +59,7 @@ export function App() {
     try {
       setPeople(await faceApi.people());
     } catch {
-      // Autocomplete and the People panel keep the last list they had.
+      // Autocomplete and the People and pets panel keep the last list they had.
     }
   }
 
@@ -78,8 +78,12 @@ export function App() {
     try {
       setPets(await petApi.pets());
     } catch {
-      // Autocomplete keeps the last list it had.
+      // Autocomplete and the People and pets panel keep the last list they had.
     }
+  }
+
+  async function refreshPeopleAndPets() {
+    await Promise.all([refreshPeople(), refreshPets()]);
   }
 
   function selectAnimal(animalId: string) {
@@ -153,26 +157,29 @@ export function App() {
     await refreshPeople();
   }
 
-  /** Keeps the opened Photo's names in step with a change made in the People panel. */
+  /** Keeps the opened Photo's names in step with a change made in the People and pets panel. */
   function onPeopleChanged(change: PeopleChange) {
-    /** The Person as they stand after the change: renamed, merged into another, or gone. */
-    const afterChange = (person: PersonRef | undefined): PersonRef | undefined => {
-      if (!person) return undefined;
+    /**
+     * The Person or Pet as they stand after the change: renamed, merged into
+     * another, or gone. A change on one side leaves the other side alone.
+     */
+    const afterChange = <T extends { id: string; name: string }>(of: NamedKind, named: T | undefined): T | undefined => {
+      if (!named) return undefined;
+      if (change.kind === "deleted-all") return undefined;
+      if (change.of !== of) return named;
       switch (change.kind) {
         case "renamed":
-          return person.id === change.person.id ? change.person : person;
+          return named.id === change.to.id ? { ...named, name: change.to.name } : named;
         case "merged":
-          return person.id === change.from ? change.into : person;
+          return named.id === change.from ? { ...named, ...change.into } : named;
         case "deleted":
-          return person.id === change.personId ? undefined : person;
-        case "deleted-all":
-          return undefined;
+          return named.id === change.id ? undefined : named;
       }
     };
     updateFaces((faces) =>
       faces.map(({ person, suggestion, ...face }) => {
-        const nextPerson = afterChange(person);
-        const nextSuggestion = afterChange(suggestion);
+        const nextPerson = afterChange("person", person);
+        const nextSuggestion = afterChange("person", suggestion);
         return {
           ...face,
           ...(nextPerson && { person: nextPerson }),
@@ -180,12 +187,15 @@ export function App() {
         };
       }),
     );
+    updateAnimals((animals) =>
+      animals.map(({ pet, ...animal }) => {
+        const nextPet = afterChange("pet", pet);
+        return { ...animal, ...(nextPet && { pet: nextPet }) };
+      }),
+    );
     // Deleting all face data deletes all pet data too (ADR-0003).
-    if (change.kind === "deleted-all") {
-      updateAnimals((animals) => animals.map(({ pet: _forgotten, ...animal }) => animal));
-      void refreshPets();
-    }
-    void refreshPeople();
+    if (change.kind === "deleted-all" || change.of === "pet") void refreshPets();
+    if (change.kind === "deleted-all" || change.of === "person") void refreshPeople();
   }
 
   async function openPhoto(photo: File) {
@@ -263,7 +273,7 @@ export function App() {
         </label>
       </div>
       <div className="panel">
-        <PeoplePanel people={people} onOpen={refreshPeople} onChanged={onPeopleChanged} />
+        <PeoplePanel people={people} pets={pets} onOpen={refreshPeopleAndPets} onChanged={onPeopleChanged} />
         {state.status === "analyzing" && (
           <p className="loading" role="status">
             Analyzing {state.photoName}…

@@ -758,14 +758,19 @@ it("shows the server's message when a Face can no longer be named", async () => 
 });
 
 async function openPeoplePanel() {
-  await userEvent.click(screen.getByRole("button", { name: "People" }));
-  return screen.findByRole("region", { name: "People" });
+  await userEvent.click(screen.getByRole("button", { name: "People and pets" }));
+  return screen.findByRole("region", { name: "People and pets" });
 }
 
 const personRow = (panel: HTMLElement, name: string) =>
   within(within(panel).getByRole("list", { name: "People" }))
     .getAllByRole("listitem")
-    .find((row) => within(row).queryByText(name, { selector: ".person-name" }))!;
+    .find((row) => within(row).queryByText(name, { selector: ".name-row-name" }))!;
+
+const petRow = (panel: HTMLElement, name: string) =>
+  within(within(panel).getByRole("list", { name: "Pets" }))
+    .getAllByRole("listitem")
+    .find((row) => within(row).queryByText(name, { selector: ".name-row-name" }))!;
 
 it("lists People with their Face counts in the People panel, even before a Photo is opened", async () => {
   fakeFaceServer(crew, crewPeople());
@@ -809,7 +814,7 @@ it("merges one Person into another after a confirmation", async () => {
   expect(server.requests).toContainEqual({ method: "POST", url: "/api/people/neil/merge", body: { into: "buzz" } });
   expect(await screen.findByRole("button", { name: "Face 1: Buzz Aldrin" })).toBeInTheDocument();
   await waitFor(() => expect(within(personRow(panel, "Buzz Aldrin")).getByText("5 Faces")).toBeInTheDocument());
-  expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument();
+  expect(within(panel).queryByText("Neil", { selector: ".name-row-name" })).not.toBeInTheDocument();
 });
 
 it("deletes a Person after a confirmation, leaving their Faces unnamed, and does nothing when it is declined", async () => {
@@ -827,7 +832,7 @@ it("deletes a Person after a confirmation, leaving their Faces unnamed, and does
   expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining("Delete Neil?"));
   expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/people/neil", body: undefined });
   expect(await screen.findByRole("button", { name: "Face 1" })).toBeInTheDocument();
-  await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument());
+  await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".name-row-name" })).not.toBeInTheDocument());
 });
 
 it('deletes all face and pet data after a confirmation, emptying the People panel and unnaming the Animals', async () => {
@@ -1005,4 +1010,19 @@ it("shows the server's message when an Animal can no longer be named", async () 
 
   expect(await screen.findByRole("alert")).toHaveTextContent("This Animal is no longer stored. Open the Photo again.");
   expect(animalBox("Animal 2: cat")).toBeInTheDocument();
+});
+
+it("lists Pets with their Animal counts in their own section of the People and pets panel, showing no Photos", async () => {
+  fakeFaceServer(crew, crewPeople(), crewPets());
+  render(<App />);
+
+  const panel = await openPeoplePanel();
+
+  expect(within(panel).getByRole("heading", { name: "People and pets" })).toBeInTheDocument();
+  const pets = within(panel).getByRole("region", { name: "Pets" });
+  expect(await within(pets).findByText("Rex")).toBeInTheDocument();
+  expect(within(petRow(panel, "Rex")).getByText("4 Animals")).toBeInTheDocument();
+  expect(within(petRow(panel, "Maxine")).getByText("2 Animals")).toBeInTheDocument();
+  expect(within(within(panel).getByRole("region", { name: "People" })).getByText("Buzz Aldrin")).toBeInTheDocument();
+  expect(within(panel).queryByRole("img")).not.toBeInTheDocument();
 });

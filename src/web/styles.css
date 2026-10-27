@@ -256,7 +256,7 @@ body {
 }
 
 .face-actions,
-.person-actions {
+.name-row-actions {
   display: inline-flex;
   gap: 0.5rem;
   margin-top: 0.5rem;
@@ -283,20 +283,20 @@ body {
   list-style: none;
 }
 
-.person {
+.name-row {
   padding: 0.4rem 0;
   border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
 }
 
-.person-name {
+.name-row-name {
   font-weight: 600;
 }
 
-.person-count {
+.name-row-count {
   opacity: 0.7;
 }
 
-.person-actions {
+.name-row-actions {
   margin: 0 0 0 1rem;
 }
 
