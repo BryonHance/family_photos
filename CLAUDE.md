@@ -11,3 +11,7 @@ The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Testing
+
+Agreed test seams, models and fixtures: `docs/agents/testing.md`. Read it before writing a test.
