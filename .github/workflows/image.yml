@@ -27,8 +27,10 @@ jobs:
       # Only the exported ONNX model may leave the export stage.
       - name: PyTorch stays out of the final image
         run: |
-          found=$(docker run --rm --entrypoint sh family-photos:ci -c \
-            'find / -xdev \( -name "torch" -o -name "libtorch*" -o -name "site-packages" \) -print 2>/dev/null')
+          # As root, so that find reads every directory; it is judged by what it
+          # prints, not by its exit status.
+          found=$(docker run --rm --user root --entrypoint sh family-photos:ci -c \
+            'find / -xdev \( -name "torch" -o -name "libtorch*" -o -name "site-packages" \) -print 2>/dev/null; true')
           if [ -n "$found" ]; then
             echo "PyTorch or Python packages found in the final image:"
             echo "$found"
