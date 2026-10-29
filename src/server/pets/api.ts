@@ -20,14 +20,14 @@ export function petRoutes(store: PetStore) {
   // The opened Photo's Animals after a change in the People and pets panel.
   app.get("/animals/:id/photo", (c) => {
     const animals = store.animalsOfPhotoOf(c.req.param("id"));
-    return animals === "no-animal" ? noSuchAnimal(c) : c.json<{ animals: Animal[] }>({ animals });
+    return animals === "no-region" ? noSuchAnimal(c) : c.json<{ animals: Animal[] }>({ animals });
   });
 
   app.put("/animals/:id/pet", async (c) => {
     const name = await nameIn(c);
     if (!name) return noName(c);
     const pet = store.nameAnimal(c.req.param("id"), name);
-    return pet === "no-animal" ? noSuchAnimal(c) : c.json<PetRef>(pet);
+    return pet === "no-region" ? noSuchAnimal(c) : c.json<PetRef>(pet);
   });
 
   // ✓ and ✕ on a Suggestion. The body names the suggested Pet, so that what is
@@ -38,8 +38,8 @@ export function petRoutes(store: PetStore) {
     const animalId = c.req.param("id");
     const result =
       c.req.param("verdict") === "confirm" ? store.confirmSuggestion(animalId, petId) : store.rejectSuggestion(animalId, petId);
-    if (result === "no-animal") return noSuchAnimal(c);
-    if (result === "no-pet") return noSuchPet(c);
+    if (result === "no-region") return noSuchAnimal(c);
+    if (result === "no-known") return noSuchPet(c);
     return c.json(result);
   });
 
@@ -53,7 +53,7 @@ export function petRoutes(store: PetStore) {
     const name = await nameIn(c);
     if (!name) return noName(c);
     const result = store.renamePet(c.req.param("id"), name);
-    if (result === "no-pet") return noSuchPet(c);
+    if (result === "no-known") return noSuchPet(c);
     if (result === "name-taken") return problem(c, 409, `A Pet is already called ${name}. Merge them instead.`);
     return c.json<PetRef>(result);
   });
@@ -62,8 +62,8 @@ export function petRoutes(store: PetStore) {
     const into = await fieldIn(c, "into");
     if (typeof into !== "string") return problem(c, 400, "Say which Pet to merge into.");
     const result = store.mergePets(c.req.param("id"), into);
-    if (result === "same-pet") return problem(c, 400, "A Pet cannot be merged into itself.");
-    if (result === "no-pet") return noSuchPet(c);
+    if (result === "same-known") return problem(c, 400, "A Pet cannot be merged into itself.");
+    if (result === "no-known") return noSuchPet(c);
     return c.body(null, 204);
   });
 

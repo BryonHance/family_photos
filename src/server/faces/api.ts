@@ -18,14 +18,14 @@ export function faceRoutes(store: FaceStore) {
   // The opened Photo's Faces after a change in the People and pets panel.
   app.get("/faces/:id/photo", (c) => {
     const faces = store.facesOfPhotoOf(c.req.param("id"));
-    return faces === "no-face" ? noSuchFace(c) : c.json<{ faces: Face[] }>({ faces });
+    return faces === "no-region" ? noSuchFace(c) : c.json<{ faces: Face[] }>({ faces });
   });
 
   app.put("/faces/:id/person", async (c) => {
     const name = await nameIn(c);
     if (!name) return noName(c);
     const person = store.nameFace(c.req.param("id"), name);
-    return person === "no-face" ? noSuchFace(c) : c.json<PersonRef>(person);
+    return person === "no-region" ? noSuchFace(c) : c.json<PersonRef>(person);
   });
 
   // ✓ and ✕ on a Suggestion. The body names the suggested Person, so that what
@@ -38,8 +38,8 @@ export function faceRoutes(store: FaceStore) {
       c.req.param("verdict") === "confirm"
         ? store.confirmSuggestion(faceId, personId)
         : store.rejectSuggestion(faceId, personId);
-    if (result === "no-face") return noSuchFace(c);
-    if (result === "no-person") return noSuchPerson(c);
+    if (result === "no-region") return noSuchFace(c);
+    if (result === "no-known") return noSuchPerson(c);
     return c.json(result);
   });
 
@@ -53,7 +53,7 @@ export function faceRoutes(store: FaceStore) {
     const name = await nameIn(c);
     if (!name) return noName(c);
     const result = store.renamePerson(c.req.param("id"), name);
-    if (result === "no-person") return noSuchPerson(c);
+    if (result === "no-known") return noSuchPerson(c);
     if (result === "name-taken") {
       return c.json({ error: { message: `Someone is already called ${name}. Merge them instead.` } }, 409);
     }
@@ -64,8 +64,8 @@ export function faceRoutes(store: FaceStore) {
     const into = await fieldIn(c, "into");
     if (typeof into !== "string") return problem(c, 400, "Say which Person to merge into.");
     const result = store.mergePeople(c.req.param("id"), into);
-    if (result === "same-person") return problem(c, 400, "A Person cannot be merged into themselves.");
-    if (result === "no-person") return noSuchPerson(c);
+    if (result === "same-known") return problem(c, 400, "A Person cannot be merged into themselves.");
+    if (result === "no-known") return noSuchPerson(c);
     return c.body(null, 204);
   });
 

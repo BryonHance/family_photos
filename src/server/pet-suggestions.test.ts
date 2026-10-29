@@ -215,7 +215,8 @@ describe("Unknown pets", () => {
     expect(dog!.unknownPet!.label).not.toBe(second[0]!.unknownPet!.label);
   });
 
-  it('never reuses an Unknown pet number, even after "Delete all face and pet data"', async () => {
+  // Four uploads through the real pet models and a VACUUM: up to 20 s on a CI runner, past the default timeout.
+  it('never reuses an Unknown pet number, even after "Delete all face and pet data"', { timeout: 40_000 }, async () => {
     await api.upload("cat.jpg");
     const before = unknownPetLabels((await api.upload("cat-and-dog.jpg")).animals);
 
