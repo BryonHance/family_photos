@@ -4,7 +4,7 @@ Judgement calls for the reviewer. Anything a tool can check belongs in CI, not h
 
 ## Share the core of a sibling feature
 
-A feature built beside an existing one (Animals beside Faces, Pets beside People) shares the existing code for the behaviour they have in common: matching, Suggestions, grouping, naming, re-detection. A copy is acceptable only with a comment naming the issue that will remove it, as #27 does for the face and pet stores.
+A feature built beside an existing one (Animals beside Faces, Pets beside People) shares the existing code for the behaviour they have in common: matching, Suggestions, grouping, naming, re-detection. A copy is acceptable only with a comment naming the issue that will remove it. Faces and Animals share `src/server/recognition/regions.ts` (#27).
 
 *Why:* a copied rule has to be fixed twice. In #26, the same three bugs had to be fixed in both stores.
 
