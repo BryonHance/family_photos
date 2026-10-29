@@ -5,7 +5,7 @@ import type { Box } from "../../shared/analysis.ts";
 import type { Pixels } from "../pixels.ts";
 import { decodeUpright, type PhotoPixels } from "../upright.ts";
 import { ALIGNED_SIZE, alignFace } from "./align.ts";
-import { verifyPinnedModels } from "../recognition/models.ts";
+import { verifyPinnedModels, type LoadOptions } from "../recognition/models.ts";
 import { iou } from "../recognition/overlap.ts";
 
 /** A point in fractions of the upright Photo's width and height. */
@@ -46,13 +46,24 @@ const NMS_IOU_THRESHOLD = 0.4;
 
 /**
  * Checks every buffalo_sc model file against its pinned SHA-256
- * (`models.sha256`, shared with `scripts/fetch-models.sh`), then loads the
- * detector and the recognizer to run on the CPU. Throws a ModelError naming
- * `pixi run models` when a file is missing or corrupt.
+ * (`models.sha256`, shared with `scripts/fetch-models.sh`). Throws a ModelError
+ * naming `pixi run models` when a file is missing or corrupt.
  */
-export async function loadFaceDetector(modelsDir: string): Promise<FaceDetector> {
-  await verifyPinnedModels("Face", join(import.meta.dirname, "models.sha256"), modelsDir);
-  const load = (file: string) => ort.InferenceSession.create(join(modelsDir, file), { executionProviders: ["cpu"] });
+export function verifyFaceModels(modelsDir: string) {
+  return verifyPinnedModels("Face", join(import.meta.dirname, "models.sha256"), modelsDir);
+}
+
+/** Checks the face models, then loads the detector and the recognizer to run on the CPU. */
+export async function loadFaceDetector(
+  modelsDir: string,
+  { verify = true, threads }: LoadOptions = {},
+): Promise<FaceDetector> {
+  if (verify) await verifyFaceModels(modelsDir);
+  const load = (file: string) =>
+    ort.InferenceSession.create(join(modelsDir, file), {
+      executionProviders: ["cpu"],
+      ...(threads !== undefined && { intraOpNumThreads: threads }),
+    });
   const detector = await load(DETECTOR_FILE);
   const recognizer = await load(RECOGNIZER_FILE);
   return {

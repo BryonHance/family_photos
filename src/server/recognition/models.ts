@@ -6,6 +6,14 @@ import { join } from "node:path";
 /** A face or pet model file is missing or does not match its pinned or recorded SHA-256. */
 export class ModelError extends Error {}
 
+/**
+ * How a detector loads its models. The server keeps the defaults: every model
+ * checked, and ONNX Runtime's one thread per core. Tests check the models once
+ * for the whole run and give each session a few threads, so that test files
+ * running side by side don't oversubscribe the CPU.
+ */
+export type LoadOptions = { verify?: boolean; threads?: number };
+
 /** Which models a file belongs to, for the message that names it: "Face model …" or "Pet model …". */
 export type ModelKind = "Face" | "Pet";
 
@@ -54,11 +62,15 @@ export async function verifyExportedModel(kind: ModelKind, path: string) {
   }
 }
 
-/** Hashes a file as a stream (the Avito model is 1.2 GB), or undefined if it is missing. */
+/**
+ * Hashes a file as a stream (the Avito model is 1.2 GB), or undefined if it is
+ * missing. Read in 1 MiB chunks: the default 64 KiB makes hashing the Avito
+ * model take three times as long.
+ */
 async function sha256(path: string): Promise<string | undefined> {
   const hash = createHash("sha256");
   try {
-    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+    for await (const chunk of createReadStream(path, { highWaterMark: 1 << 20 })) hash.update(chunk as Buffer);
   } catch {
     return undefined;
   }

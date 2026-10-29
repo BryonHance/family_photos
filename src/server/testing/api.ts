@@ -10,9 +10,9 @@ import type { Analysis, Animal, Face, PersonSummary, PetRef, PetSummary } from "
 import { createApp } from "../app.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import { openFaceStore } from "../faces/store.ts";
-import { loadAnimalDetector, type AnimalDetector } from "../pets/detector.ts";
+import type { AnimalDetector } from "../pets/detector.ts";
+import { loadTestAnimalDetector } from "./models.ts";
 
-export const modelsDir = join(import.meta.dirname, "../../../models");
 export const fixture = (name: string) => join(import.meta.dirname, "../../../fixtures", name);
 
 /** D-FINE-S and the Avito model, loaded once for every harness. */
@@ -47,7 +47,7 @@ export async function openApi({
   }
   const faceStore = openFaceStore(dbPath);
   // Every Photo is searched for cats and dogs too, as in production.
-  const animalDetector = await (sharedAnimalDetector ??= loadAnimalDetector(modelsDir));
+  const animalDetector = await (sharedAnimalDetector ??= loadTestAnimalDetector());
   const app = (detector: FaceDetector, animals = animalDetector) =>
     createApp({ exiftool, tempDir, faceDetector: detector, faceStore, animalDetector: animals, maxUploadBytes: 5 * 1024 * 1024 });
 

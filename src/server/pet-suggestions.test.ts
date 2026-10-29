@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import type { AnimalDetector } from "./pets/detector.ts";
-import { fixture, modelsDir, openApi, type Api } from "./testing/api.ts";
+import { fixture, openApi, type Api } from "./testing/api.ts";
+import { loadTestFaceDetector } from "./testing/models.ts";
 
 // These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
 // The same cat is in cat.jpg, cat.png, cat.webp and (left) cat-and-dog.jpg.
@@ -18,7 +19,7 @@ let api: Api;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
-  faceDetector = await loadFaceDetector(modelsDir);
+  faceDetector = await loadTestFaceDetector();
 });
 
 afterAll(async () => {

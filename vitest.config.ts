@@ -10,9 +10,8 @@ export default defineConfig({
           environment: "node",
           include: ["src/server/**/*.test.ts"],
           testTimeout: 20_000,
-          // The first openApi in each file loads and hashes the 1.2 GB Avito model,
-          // which can take longer than the default 10 s on a busy machine.
-          hookTimeout: 60_000,
+          // Checks every model's SHA-256 once, so test files load them unhashed.
+          globalSetup: ["src/server/testing/global-setup.ts"],
         },
       },
       {
