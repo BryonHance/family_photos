@@ -1,0 +1,54 @@
+name: Image
+
+# Builds the Docker image the personal server runs, so a change to the
+# Dockerfile, the model scripts or pixi.lock is caught here rather than on the
+# server. The image is never pushed: the face models' licence is non-commercial
+# research only (see the README). The layer cache keeps the PyTorch export of
+# the Avito model from running again until its inputs change.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: family-photos:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: docker image ls family-photos:ci
+      # Only the exported ONNX model may leave the export stage.
+      - name: PyTorch stays out of the final image
+        run: |
+          # As root, so that find reads every directory; it is judged by what it
+          # prints, not by its exit status.
+          found=$(docker run --rm --user root --entrypoint sh family-photos:ci -c \
+            'find / -xdev \( -name "torch" -o -name "libtorch*" -o -name "site-packages" \) -print 2>/dev/null; true')
+          if [ -n "$found" ]; then
+            echo "PyTorch or Python packages found in the final image:"
+            echo "$found"
+            exit 1
+          fi
+      # The server checks every model file against its SHA-256 before it
+      # listens, so serving the UI means the built-in models are whole.
+      - name: The server starts and serves the UI
+        run: |
+          docker run --detach --name viewer --publish 3000:3000 family-photos:ci
+          for _ in $(seq 120); do
+            if curl --fail --silent --output /dev/null http://localhost:3000/; then
+              exit 0
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' viewer)" != true ]; then
+              break
+            fi
+            sleep 1
+          done
+          docker logs viewer
+          exit 1
