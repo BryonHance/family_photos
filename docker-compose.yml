@@ -5,8 +5,9 @@ services:
     # Reachable only from the home network and VPN; v1 has no login (ADR-0001).
     ports:
       - "8080:3000"
-    # faces.db: face embeddings, boxes, Photo hashes and Person names, and nothing
-    # else (ADR-0002). Keep this volume out of any backup that leaves the server.
+    # faces.db: face and pet embeddings, boxes, Photo hashes and Person and Pet
+    # names, and nothing else (ADR-0002, ADR-0003). Keep this volume out of any
+    # backup that leaves the server.
     volumes:
       - face-data:/app/data
     restart: unless-stopped

@@ -195,7 +195,7 @@ The pattern: none of the self-hosted apps ships it. All of them give species sea
 - **Detector:** D-FINE-S (COCO), from [onnx-community/dfine_s_coco-ONNX](https://huggingface.co/onnx-community/dfine_s_coco-ONNX) at revision `a3cf031`. The Photo is stretched to 640×640, and a cat or dog counts above sigmoid score 0.5. The largest one in each Photo is taken to be the pet.
 - **Crop:** the box is padded square with black and resized to 224.
 - **DINOv2-S:** fp32, from [onnx-community/dinov2-small-ONNX](https://huggingface.co/onnx-community/dinov2-small-ONNX) at `08c606e`. The class token is used, with ImageNet mean/std.
-- **Avito CLIP-L:** the vision tower plus projection, exported locally from revision `f50a193` by `scripts/pet-trial/export-avito.py`, with CLIP mean/std.
+- **Avito CLIP-L:** the vision tower plus projection, exported locally from revision `f50a193` by `scripts/pet-trial/export-avito.py` (since moved to `scripts/export-avito.py`), with CLIP mean/std.
 - **Similarity:** both embeddings are L2-normalised and compared by cosine.
 
 **Detection:** D-FINE-S found a pet in all 20 Photos: 13 dogs and 7 cats.

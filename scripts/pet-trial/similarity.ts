@@ -2,7 +2,7 @@
 // our pets apart? See docs/research/face-and-pet-recognition.md, open question 1.
 //
 //   pixi run pet-models                        # D-FINE-S and DINOv2-S
-//   pixi run -e pet-export pet-export          # Avito CLIP-L (optional; 1.7 GB download)
+//   pixi run models                            # Avito CLIP-L (optional; 1.7 GB download)
 //   pixi run pet-trial <sample-dir>
 //
 // <sample-dir> holds one folder per pet (any name), each holding Photos of that
@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { exiftool } from "exiftool-vendored";
 import ort from "onnxruntime-node";
 import sharp, { type Sharp } from "sharp";
-import { cosine } from "../../src/server/faces/similarity.ts";
+import { cosine } from "../../src/server/recognition/similarity.ts";
 import type { Pixels } from "../../src/server/pixels.ts";
 import { decodeUprightHeic } from "../../src/server/preview.ts";
 

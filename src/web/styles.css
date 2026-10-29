@@ -43,8 +43,10 @@ body {
   list-style: none;
 }
 
+/* Above Animal boxes, so that a Face inside an Animal's box (a child hugging the dog) can still be clicked. */
 .face-box {
   position: absolute;
+  z-index: 1;
   box-sizing: border-box;
   border: 2px solid #facc15;
   border-radius: 2px;
@@ -106,7 +108,81 @@ body {
   background: #d4d4d4;
 }
 
-/* ✓ and ✕ sit above the box's top right corner, beside its number. */
+/*
+ * Animal boxes are cyan with rounded corners, apart from the yellow Face boxes,
+ * and labelled with the species above and the Pet's name below.
+ */
+.animal-boxes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.animal-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #22d3ee;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
+}
+
+/* The whole box is the button that selects its Animal for naming. */
+.animal-box > button {
+  all: unset;
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.animal-box > button[aria-pressed="true"],
+.animal-box > button:focus-visible {
+  outline: 3px solid #fff;
+  border-radius: 8px;
+}
+
+.animal-species,
+.animal-name {
+  position: absolute;
+  top: -2px;
+  left: 6px;
+  transform: translateY(-100%);
+  padding: 0 0.3em;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #000;
+  background: #22d3ee;
+  border-radius: 2px 2px 0 0;
+}
+
+.animal-name {
+  top: auto;
+  bottom: -2px;
+  transform: translateY(100%);
+  font-weight: 500;
+  border-radius: 0 0 2px 2px;
+}
+
+/* As for Faces: a Suggestion is dashed until it is confirmed; an Unknown pet's Animals are grey. */
+.animal-box.suggested {
+  border-style: dashed;
+}
+
+.animal-box.suggested .animal-name {
+  font-style: italic;
+}
+
+.animal-box.unknown-pet {
+  border-color: #d4d4d4;
+}
+
+.animal-box.unknown-pet .animal-species,
+.animal-box.unknown-pet .animal-name {
+  background: #d4d4d4;
+}
+
+/* ✓ and ✕ sit above the box's top right corner, beside its number or species. */
 .suggestion-actions {
   position: absolute;
   top: -2px;
@@ -133,7 +209,8 @@ body {
   outline: 3px solid #fff;
 }
 
-.faces {
+.faces,
+.pets {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -141,16 +218,19 @@ body {
   gap: 0 1rem;
 }
 
-.faces h2 {
+.faces h2,
+.pets h2 {
   margin: 0.5rem 0;
 }
 
 .faces > .hint,
+.pets > .hint,
 .face-form {
   flex-basis: 100%;
 }
 
-.faces > .hint {
+.faces > .hint,
+.pets > .hint {
   margin: 0 0 0.5rem;
   opacity: 0.7;
 }
@@ -194,7 +274,7 @@ body {
 }
 
 .face-actions,
-.person-actions {
+.name-row-actions {
   display: inline-flex;
   gap: 0.5rem;
   margin-top: 0.5rem;
@@ -221,20 +301,20 @@ body {
   list-style: none;
 }
 
-.person {
+.name-row {
   padding: 0.4rem 0;
   border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
 }
 
-.person-name {
+.name-row-name {
   font-weight: 600;
 }
 
-.person-count {
+.name-row-count {
   opacity: 0.7;
 }
 
-.person-actions {
+.name-row-actions {
   margin: 0 0 0 1rem;
 }
 

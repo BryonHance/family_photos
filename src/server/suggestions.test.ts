@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
-import { modelsDir, openFaceApi, type FaceApi } from "./testing/face-api.ts";
+import { fixture, modelsDir, openApi, type Api } from "./testing/api.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
 // crew.jpg shows three Faces, left to right: Armstrong, Collins, Aldrin.
@@ -10,7 +13,7 @@ import { modelsDir, openFaceApi, type FaceApi } from "./testing/face-api.ts";
 
 let exiftool: ExifTool;
 let faceDetector: FaceDetector;
-let api: FaceApi;
+let api: Api;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
@@ -22,7 +25,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  api = await openFaceApi({ exiftool, faceDetector });
+  api = await openApi({ exiftool, faceDetector });
 });
 
 afterEach(async () => {
@@ -167,11 +170,11 @@ describe("Strangers", () => {
     expect(second.every((face) => face.person === undefined && face.suggestion === undefined)).toBe(true);
   });
 
-  it('never reuses a Stranger number, even after "Delete all face data"', async () => {
+  it('never reuses a Stranger number, even after "Delete all face and pet data"', async () => {
     await api.upload("crew.jpg");
     const before = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
 
-    await api.deleteAllFaceData();
+    await api.deleteAllFaceAndPetData();
 
     await api.upload("crew.jpg");
     const after = strangerLabels((await api.upload("crew-rotated.jpg")).faces);
@@ -193,6 +196,21 @@ describe("Strangers", () => {
       expect.stringMatching(/^Unknown \d+, in 2 Photos$/),
     ]);
     expect(twice[1]!.stranger).toEqual(twice[0]!.stranger);
+  });
+
+  it("gives the Faces of a Photo as they now stand, by one of its Faces, such as after their Person is deleted", async () => {
+    await api.upload("crew.jpg");
+    const [first] = (await api.upload("crew-rotated.jpg")).faces;
+    const [armstrong] = (await api.upload("crew.jpg")).faces;
+    const neil = await api.nameFace(armstrong!.id, "Neil");
+    await api.confirmSuggestion(first!.id, neil.id);
+
+    await api.deletePerson(neil.id);
+
+    const now = await api.facesOfPhotoOf(armstrong!.id);
+    expect(now[0]!.stranger?.photoCount).toBe(2);
+    expect(now).toEqual((await api.upload("crew.jpg")).faces);
+    expect((await api.call("GET", "/api/faces/no-such-face/photo")).status).toBe(404);
   });
 
   it("the Faces of a deleted Person join a Stranger again, under a number never used before", async () => {
@@ -269,6 +287,101 @@ describe("Strangers", () => {
       expect(await reopen("armstrong-twice.jpg")).toEqual(afterRejecting);
       expect((await reopen("crew-rotated.jpg")).suggestion).toEqual(neil);
     });
+
+    it("suggests the named Person for the rest even when another Person is a nearer match", async () => {
+      const { a } = await uploadChain();
+      const neil = await api.nameFace(a.id, "Neil");
+      // Buzz is like C (cosine 0.55, enough for a Suggestion) but not enough to join its Stranger.
+      const buzzAt80: FaceDetector = {
+        modelVersion: faceDetector.modelVersion,
+        detect: async (photo) => {
+          const [face] = await faceDetector.detect(photo);
+          const embedding = new Float32Array(512);
+          embedding[0] = 0.55 * Math.cos((80 * Math.PI) / 180);
+          embedding[1] = 0.55 * Math.sin((80 * Math.PI) / 180);
+          embedding[2] = Math.sqrt(1 - 0.55 ** 2);
+          return [{ ...face!, embedding }];
+        },
+      };
+      const [buzzFace] = (await api.upload("person-and-dog.jpg", { detector: buzzAt80 })).faces;
+      await api.nameFace(buzzFace!.id, "Buzz");
+
+      expect((await reopen("armstrong-twice.jpg")).suggestion).toEqual(neil);
+    });
+
+    it("keeps one state per Face: naming or confirming takes it out of its Stranger", async () => {
+      const { a, b } = await uploadChain();
+      const neil = await api.nameFace(a.id, "Neil");
+      await api.confirmSuggestion(b.id, neil.id);
+
+      const stored = api.storedRows()["faces"]!;
+      for (const named of [a, b]) {
+        expect(stored.find((row) => row["id"] === named.id)).toMatchObject({ person_id: neil.id, stranger_id: null });
+      }
+      // C is still suggested as Neil.
+      expect((await reopen("armstrong-twice.jpg")).suggestion).toEqual(neil);
+    });
+  });
+
+  it("upgrades a faces.db that kept a named Face in its Stranger, and refuses both from then on", async () => {
+    await api.close();
+    const crewPhoto = await photoHash("crew.jpg");
+    const twicePhoto = await photoHash("armstrong-twice.jpg");
+    const unit = (axis: number) => {
+      const embedding = new Float32Array(512);
+      embedding[axis] = 1;
+      return new Uint8Array(embedding.buffer);
+    };
+    api = await openApi({
+      exiftool,
+      faceDetector,
+      // As the face store left it before a Face had one state: the named Face
+      // kept its Stranger, which the unlike Face is also in.
+      existing: (db) => {
+        db.exec(`
+          CREATE TABLE people (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
+          CREATE TABLE strangers (id INTEGER PRIMARY KEY AUTOINCREMENT);
+          CREATE TABLE faces (
+            id            TEXT PRIMARY KEY,
+            photo_sha256  TEXT NOT NULL,
+            box_x         REAL NOT NULL,
+            box_y         REAL NOT NULL,
+            box_width     REAL NOT NULL,
+            box_height    REAL NOT NULL,
+            model_version TEXT,
+            embedding     BLOB,
+            person_id     TEXT REFERENCES people (id) ON DELETE SET NULL,
+            not_a_face    INTEGER NOT NULL DEFAULT 0 CHECK (not_a_face IN (0, 1)),
+            stranger_id   INTEGER REFERENCES strangers (id) ON DELETE SET NULL,
+            CHECK (not_a_face = 0 OR (embedding IS NULL AND person_id IS NULL AND model_version IS NULL AND stranger_id IS NULL)),
+            CHECK (not_a_face = 1 OR (embedding IS NOT NULL AND model_version IS NOT NULL))
+          );
+          CREATE TABLE photos (sha256 TEXT PRIMARY KEY, model_version TEXT NOT NULL);
+          INSERT INTO people VALUES ('neil', 'Neil');
+          INSERT INTO strangers VALUES (5);`);
+        const insert = db.prepare("INSERT INTO faces VALUES (?, ?, 0.1, 0.1, 0.2, 0.2, ?, ?, ?, 0, 5)");
+        insert.run("named", crewPhoto, faceDetector.modelVersion, unit(0), "neil");
+        insert.run("unnamed", twicePhoto, faceDetector.modelVersion, unit(1), null);
+        const photo = db.prepare("INSERT INTO photos VALUES (?, ?)");
+        for (const sha256 of [crewPhoto, twicePhoto]) photo.run(sha256, faceDetector.modelVersion);
+      },
+    });
+
+    expect((await api.upload("armstrong-twice.jpg")).faces).toEqual([
+      expect.objectContaining({ id: "unnamed", suggestion: { id: "neil", name: "Neil" } }),
+    ]);
+    expect((await api.upload("crew.jpg")).faces).toEqual([
+      expect.objectContaining({ id: "named", person: { id: "neil", name: "Neil" } }),
+    ]);
+    expect(api.storedRows()["faces"]!.find((row) => row["id"] === "named")).toMatchObject({ stranger_id: null });
+    const db = new DatabaseSync(api.dbPath);
+    try {
+      expect(() => db.exec("UPDATE faces SET stranger_id = (SELECT id FROM strangers) WHERE id = 'named'")).toThrow(
+        /CHECK constraint failed/,
+      );
+    } finally {
+      db.close();
+    }
   });
 
   it("a Stranger left with Faces in one Photo shows no label", async () => {
@@ -284,3 +397,6 @@ describe("Strangers", () => {
     ]);
   });
 });
+
+/** The SHA-256 of a fixture's bytes: the Photo's hash, as the store keys it. */
+const photoHash = async (name: string) => createHash("sha256").update(await readFile(fixture(name))).digest("hex");

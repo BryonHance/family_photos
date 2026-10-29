@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
-import type { PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import type { Face, PersonRef, PersonSummary } from "../../shared/analysis.ts";
+import { fieldIn, nameIn } from "../recognition/request.ts";
 import type { FaceStore } from "./store.ts";
 
 /**
@@ -13,6 +14,12 @@ export function faceRoutes(store: FaceStore) {
   const noSuchFace = (c: Context) => problem(c, 404, "This Face is no longer stored. Open the Photo again.");
   const noSuchPerson = (c: Context) => problem(c, 404, "There is no such Person.");
   const noName = (c: Context) => problem(c, 400, "Give a name.");
+
+  // The opened Photo's Faces after a change in the People and pets panel.
+  app.get("/faces/:id/photo", (c) => {
+    const faces = store.facesOfPhotoOf(c.req.param("id"));
+    return faces === "no-face" ? noSuchFace(c) : c.json<{ faces: Face[] }>({ faces });
+  });
 
   app.put("/faces/:id/person", async (c) => {
     const name = await nameIn(c);
@@ -64,22 +71,11 @@ export function faceRoutes(store: FaceStore) {
 
   app.delete("/people/:id", (c) => (store.deletePerson(c.req.param("id")) ? c.body(null, 204) : noSuchPerson(c)));
 
-  app.delete("/face-data", (c) => {
-    store.deleteAllFaceData();
+  // Face and pet data go together (ADR-0003).
+  app.delete("/face-and-pet-data", (c) => {
+    store.deleteAllFaceAndPetData();
     return c.body(null, 204);
   });
 
   return app;
-}
-
-/** One field of a JSON body, of whatever type; undefined when the body is not a JSON object or lacks it. */
-async function fieldIn(c: Context, field: string): Promise<unknown> {
-  const body: unknown = await c.req.json().catch(() => undefined);
-  return typeof body === "object" && body !== null && field in body ? (body as Record<string, unknown>)[field] : undefined;
-}
-
-/** The `name` of a JSON body, without spaces around it; undefined when there is none. */
-async function nameIn(c: Context): Promise<string | undefined> {
-  const name = await fieldIn(c, "name");
-  return typeof name === "string" && name.trim() !== "" ? name.trim() : undefined;
 }

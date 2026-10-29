@@ -150,3 +150,47 @@ magick "$out/crew.jpg" -crop 300x180+0+0 +repage -quality 80 "$out/no-faces.jpg"
 # them the same crop mirrored. Mirroring makes the right-hand Face a slightly
 # weaker match for him than the left-hand one.
 magick "$out/crew.jpg" -crop 220x260+87+125 +repage \( +clone -flop \) +append -strip -quality 85 "$out/armstrong-twice.jpg"
+
+# Photos with known cats and dogs, for pet detection. Both are public domain on
+# Wikimedia Commons, never family Photos and never CC-attribution images such as
+# COCO's: George Chernilevsky's "Brown tabby cat 2018 G1" (released into the
+# public domain by its author) and the US Army's "Military working dog and his
+# handler pose for photo" (DVIDS 7642320, public domain as a work of the US
+# government). Each is downloaded at a pinned checksum and shrunk.
+curl --fail --location --silent --show-error -A "family-photos-fixtures" -o "$tmp/cat.jpg" \
+  "https://upload.wikimedia.org/wikipedia/commons/5/5a/Brown_tabby_cat_2018_G1.jpg"
+echo "66885b0394785ffce7ef4a32f2dc747d9b6c3237d2d78cfd6b2852e938797382  $tmp/cat.jpg" | sha256sum --check --quiet
+curl --fail --location --silent --show-error -A "family-photos-fixtures" -o "$tmp/handler.jpg" \
+  "https://upload.wikimedia.org/wikipedia/commons/b/ba/Military_working_dog_and_his_handler_pose_for_photo_%287642320%29.jpg"
+echo "54196faa0f0fb44ad8b5c0f86b79c8642801253c764686c95c6cafb56554f878  $tmp/handler.jpg" | sha256sum --check --quiet
+
+# A cat on a branch, and a soldier (left) with his dog (right).
+magick "$tmp/cat.jpg" -resize 800x800 -strip -quality 80 "$out/cat.jpg"
+magick "$tmp/handler.jpg" -resize 800x800 -strip -quality 80 "$out/person-and-dog.jpg"
+
+# The dog alone: the right-hand part of the same Photo, without the soldier.
+magick "$out/person-and-dog.jpg" -crop 300x618+480+0 +repage -strip -quality 80 "$out/dog.jpg"
+
+# The same dog (Ddunn) in a second, independently taken Photo, so that a
+# Suggestion can be tested on two real Photos of one animal: "Military working
+# dog and his handler clear vehicles at check point" (DVIDS 7642319, taken on
+# another day by the same US Army photographer, public domain as a work of the
+# US government). The dog stands at a truck's grille, the handler beside it.
+curl --fail --location --silent --show-error -A "family-photos-fixtures" -o "$tmp/checkpoint.jpg" \
+  "https://upload.wikimedia.org/wikipedia/commons/a/a5/Military_working_dog_and_his_handler_clear_vehicles_at_check_point_%287642319%29.jpg"
+echo "2844584b7e20b96bfe1efa6d4ba33ec3933784b53c0d7250835714f2e4e957f8  $tmp/checkpoint.jpg" | sha256sum --check --quiet
+magick "$tmp/checkpoint.jpg" -resize 800x800 -strip -quality 80 "$out/dog-at-checkpoint.jpg"
+
+# Two animals in one Photo: the cat (left) beside the dog (right), each 400 px high.
+magick \( "$out/cat.jpg" -resize x400 \) \( "$out/dog.jpg" -resize x400 \) +append -strip -quality 80 "$out/cat-and-dog.jpg"
+
+# The cat in the other formats: PNG and WebP, a HEIC stored sideways with EXIF
+# Orientation 6 and no irot box, and a TIFF and a RAW, which get no Animals.
+magick "$out/cat.jpg" -resize 400x400 -strip "$out/cat.png"
+magick "$out/cat.jpg" -resize 400x400 -strip -quality 80 "$out/cat.webp"
+magick "$out/cat.jpg" -rotate -90 -strip "$tmp/cat-sideways.jpg"
+heif-enc -q 80 -o "$out/cat-oriented.heic" "$tmp/cat-sideways.jpg"
+"$exiftool" -q -overwrite_original -Orientation#=6 "$out/cat-oriented.heic"
+magick "$out/cat.jpg" -compress jpeg "$out/cat.tif"
+cp "$out/cat.tif" "$out/cat.dng"
+"$exiftool" -q -overwrite_original -DNGVersion="1.4.0.0" -Make="Canon" -Model="Canon EOS R6" "$out/cat.dng"

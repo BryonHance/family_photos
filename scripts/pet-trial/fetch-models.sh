@@ -3,7 +3,7 @@
 # given as $1) and checks their pinned SHA-256s: D-FINE-S trained on COCO (finds
 # cats and dogs) and DINOv2-S (the light embedding). Both are Apache-2.0, in
 # onnx-community's conversions at pinned revisions. The Avito CLIP-L embedding has
-# no ONNX release; `pixi run -e pet-export pet-export` makes it.
+# no ONNX release; `pixi run models` exports it (scripts/export-avito.py).
 # See docs/research/face-and-pet-recognition.md. Needs curl and sha256sum.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Analysis, PersonSummary } from "../shared/analysis.ts";
+import type { Analysis, PersonSummary, PetSummary } from "../shared/analysis.ts";
 import { App } from "./App.tsx";
 
 const analysis: Analysis = {
@@ -23,9 +23,10 @@ const analysis: Analysis = {
     },
   ],
   faces: [],
+  animals: [],
 };
 
-const photo = new File(["jpeg bytes"], "beach.jpg", { type: "image/jpeg" });
+const photo =new File(["jpeg bytes"], "beach.jpg", { type: "image/jpeg" });
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json(analysis)));
@@ -525,13 +526,101 @@ it("shows no Faces heading, toggle or boxes when a Photo has no Faces", async ()
   expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
 });
 
+const withFacesAndAnimals: Analysis = {
+  ...withFaces,
+  animals: [
+    { id: "animal-a", species: "dog", box: { x: 0.3, y: 0.4, width: 0.25, height: 0.5 } },
+    { id: "animal-b", species: "cat", box: { x: 0.7, y: 0.5, width: 0.2, height: 0.3 } },
+  ],
+};
+
+async function open(opened: Analysis) {
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json(opened));
+  render(<App />);
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), photo);
+  await screen.findByRole("img", { name: "beach.jpg" });
+}
+
+it("draws a box over the preview for each Animal, labelled with its species and styled apart from Face boxes", async () => {
+  await open(withFacesAndAnimals);
+
+  const boxes = within(screen.getByRole("list", { name: "Animal boxes" })).getAllByRole("listitem");
+  expect(boxes.map((box) => box.textContent)).toEqual(["dog", "cat"]);
+  expect(boxes[0]).toHaveStyle({ left: "30%", top: "40%", width: "25%", height: "50%" });
+  expect(boxes[1]).toHaveStyle({ left: "70%", top: "50%", width: "20%", height: "30%" });
+  const faceBox = within(screen.getByRole("list", { name: "Face boxes" })).getAllByRole("listitem")[0]!;
+  expect(boxes[0]!.className).not.toBe(faceBox.className);
+});
+
+it("heads the Animals with their count beside the Faces, above the Summary", async () => {
+  await open(withFacesAndAnimals);
+
+  const faces = screen.getByRole("region", { name: "Faces (2)" });
+  const pets = screen.getByRole("region", { name: "Pets (2)" });
+  const summary = screen.getByRole("region", { name: "Summary" });
+  expect(faces.compareDocumentPosition(pets) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(pets.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("hides Face and Animal boxes alike when Show boxes is turned off", async () => {
+  await open(withFacesAndAnimals);
+  expect(screen.getAllByRole("checkbox", { name: "Show boxes" })).toHaveLength(1);
+
+  await userEvent.click(screen.getByRole("checkbox", { name: "Show boxes" }));
+
+  expect(screen.queryByRole("list", { name: "Face boxes" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Animal boxes" })).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("checkbox", { name: "Show boxes" }));
+
+  expect(screen.getByRole("list", { name: "Face boxes" })).toBeInTheDocument();
+  expect(screen.getByRole("list", { name: "Animal boxes" })).toBeInTheDocument();
+});
+
+it("offers Show boxes under the Pets heading when a Photo has Animals but no Faces", async () => {
+  await open({ ...withFacesAndAnimals, faces: [] });
+
+  expect(screen.queryByRole("region", { name: /faces/i })).not.toBeInTheDocument();
+  const toggle = within(screen.getByRole("region", { name: "Pets (2)" })).getByRole("checkbox", { name: "Show boxes" });
+
+  await userEvent.click(toggle);
+
+  expect(screen.queryByRole("list", { name: "Animal boxes" })).not.toBeInTheDocument();
+});
+
+it("shows nothing about pets when a Photo has no Animals", async () => {
+  await openPhotoWithFaces();
+
+  expect(screen.getByRole("region", { name: "Faces (2)" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: /pets/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Animal boxes" })).not.toBeInTheDocument();
+});
+
 /**
- * Stands in for the server's face routes, keeping People in memory, and records
- * every request so tests can check what the viewer sent.
+ * Stands in for the server's face and pet routes, keeping People and Pets in
+ * memory, and records every request so tests can check what the viewer sent.
+ * The opened Photo's stored Faces and Animals follow a rename, merge or delete
+ * in the plainest way, unless `afterChange` says how the server shows them.
  */
-function fakeFaceServer(opened: Analysis, people: PersonSummary[] = []) {
+function fakeFaceServer(
+  opened: Analysis,
+  people: PersonSummary[] = [],
+  pets: PetSummary[] = [],
+  afterChange: Partial<Pick<Analysis, "faces" | "animals">> = {},
+) {
   const requests: { method: string; url: string; body?: unknown }[] = [];
   let nextId = 1;
+  let stored = { faces: opened.faces, animals: opened.animals };
+  /** Renames, merges or unnames a Person or Pet wherever the stored Photo shows them. */
+  const restore = (of: "person" | "pet", id: string, to: { id: string; name: string } | undefined) => {
+    const swap = <T extends { id: string }>(ref: T | undefined) => (ref?.id === id ? to : ref);
+    const tidy = <T extends object>(item: T) =>
+      Object.fromEntries(Object.entries(item).filter(([, value]) => value !== undefined)) as T;
+    stored =
+      of === "person"
+        ? { ...stored, faces: stored.faces.map((f) => tidy({ ...f, person: swap(f.person), suggestion: swap(f.suggestion) })) }
+        : { ...stored, animals: stored.animals.map((a) => tidy({ ...a, pet: swap(a.pet), suggestion: swap(a.suggestion) })) };
+  };
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -540,7 +629,26 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = []) {
     const route = (pattern: RegExp, verb: string) => (method === verb ? url.match(pattern) : null);
     let match;
     if (url === "/api/analyze") return Response.json(opened);
+    if (route(/^\/api\/faces\/(.+)\/photo$/, "GET")) return Response.json({ faces: afterChange.faces ?? stored.faces });
+    if (route(/^\/api\/animals\/(.+)\/photo$/, "GET")) return Response.json({ animals: afterChange.animals ?? stored.animals });
     if (route(/^\/api\/people$/, "GET")) return Response.json({ people });
+    if (route(/^\/api\/pets$/, "GET")) return Response.json({ pets });
+    if ((match = route(/^\/api\/animals\/(.+)\/pet$/, "PUT"))) {
+      let pet = pets.find((p) => p.name.toLowerCase() === body!["name"]!.toLowerCase());
+      if (!pet) pets = [...pets, (pet = { id: `pet-${nextId++}`, name: body!["name"]!, animalCount: 0 })];
+      pet.animalCount++;
+      return Response.json({ id: pet.id, name: pet.name });
+    }
+    if (route(/^\/api\/animals\/(.+)\/not-a-pet$/, "POST")) return new Response(null, { status: 204 });
+    if ((match = route(/^\/api\/animals\/(.+)\/suggestion\/confirm$/, "POST"))) {
+      const pet = pets.find((p) => p.id === body!["petId"])!;
+      pet.animalCount++;
+      return Response.json({ id: pet.id, name: pet.name });
+    }
+    if ((match = route(/^\/api\/animals\/(.+)\/suggestion\/reject$/, "POST"))) {
+      const { suggestion: _rejected, ...animal } = opened.animals.find((a) => a.id === match![1])!;
+      return Response.json(animal);
+    }
     if ((match = route(/^\/api\/faces\/(.+)\/person$/, "PUT"))) {
       let person = people.find((p) => p.name.toLowerCase() === body!["name"]!.toLowerCase());
       if (!person) people = [...people, (person = { id: `person-${nextId++}`, name: body!["name"]!, faceCount: 0 })];
@@ -559,19 +667,41 @@ function fakeFaceServer(opened: Analysis, people: PersonSummary[] = []) {
     }
     if ((match = route(/^\/api\/people\/([^/]+)$/, "PATCH"))) {
       people = people.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      restore("person", match[1]!, { id: match[1]!, name: body!["name"]! });
       return Response.json({ id: match[1], name: body!["name"] });
     }
     if ((match = route(/^\/api\/people\/([^/]+)\/merge$/, "POST"))) {
       const from = people.find((p) => p.id === match![1])!;
+      const into = people.find((p) => p.id === body!["into"])!;
+      restore("person", from.id, { id: into.id, name: into.name });
       people = people.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, faceCount: p.faceCount + from.faceCount } : p));
       return new Response(null, { status: 204 });
     }
     if ((match = route(/^\/api\/people\/([^/]+)$/, "DELETE"))) {
       people = people.filter((p) => p.id !== match![1]);
+      restore("person", match[1]!, undefined);
       return new Response(null, { status: 204 });
     }
-    if (route(/^\/api\/face-data$/, "DELETE")) {
+    if ((match = route(/^\/api\/pets\/([^/]+)$/, "PATCH"))) {
+      pets = pets.map((p) => (p.id === match![1] ? { ...p, name: body!["name"]! } : p));
+      restore("pet", match[1]!, { id: match[1]!, name: body!["name"]! });
+      return Response.json({ id: match[1], name: body!["name"] });
+    }
+    if ((match = route(/^\/api\/pets\/([^/]+)\/merge$/, "POST"))) {
+      const from = pets.find((p) => p.id === match![1])!;
+      const into = pets.find((p) => p.id === body!["into"])!;
+      restore("pet", from.id, { id: into.id, name: into.name });
+      pets = pets.filter((p) => p !== from).map((p) => (p.id === body!["into"] ? { ...p, animalCount: p.animalCount + from.animalCount } : p));
+      return new Response(null, { status: 204 });
+    }
+    if ((match = route(/^\/api\/pets\/([^/]+)$/, "DELETE"))) {
+      pets = pets.filter((p) => p.id !== match![1]);
+      restore("pet", match[1]!, undefined);
+      return new Response(null, { status: 204 });
+    }
+    if (route(/^\/api\/face-and-pet-data$/, "DELETE")) {
       people = [];
+      pets = [];
       return new Response(null, { status: 204 });
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
@@ -677,21 +807,26 @@ it("shows the server's message when a Face can no longer be named", async () => 
   expect(faceBox("Face 2")).toBeInTheDocument();
 });
 
-async function openPeoplePanel() {
-  await userEvent.click(screen.getByRole("button", { name: "People" }));
-  return screen.findByRole("region", { name: "People" });
+async function openPeopleAndPetsPanel() {
+  await userEvent.click(screen.getByRole("button", { name: "People and pets" }));
+  return screen.findByRole("region", { name: "People and pets" });
 }
 
 const personRow = (panel: HTMLElement, name: string) =>
   within(within(panel).getByRole("list", { name: "People" }))
     .getAllByRole("listitem")
-    .find((row) => within(row).queryByText(name, { selector: ".person-name" }))!;
+    .find((row) => within(row).queryByText(name, { selector: ".name-row-name" }))!;
 
-it("lists People with their Face counts in the People panel, even before a Photo is opened", async () => {
+const petRow = (panel: HTMLElement, name: string) =>
+  within(within(panel).getByRole("list", { name: "Pets" }))
+    .getAllByRole("listitem")
+    .find((row) => within(row).queryByText(name, { selector: ".name-row-name" }))!;
+
+it("lists People with their Face counts in the People and pets panel, even before a Photo is opened", async () => {
   fakeFaceServer(crew, crewPeople());
   render(<App />);
 
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
 
   expect(await within(panel).findByText("Buzz Aldrin")).toBeInTheDocument();
   expect(within(personRow(panel, "Buzz Aldrin")).getByText("3 Faces")).toBeInTheDocument();
@@ -701,7 +836,7 @@ it("lists People with their Face counts in the People panel, even before a Photo
 it("renames a Person, renaming their Faces in the opened Photo", async () => {
   const server = fakeFaceServer(crew, crewPeople());
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
 
   await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Rename Neil" }));
@@ -718,7 +853,7 @@ it("merges one Person into another after a confirmation", async () => {
   const server = fakeFaceServer(crew, crewPeople());
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
 
   await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Merge Neil" }));
@@ -729,14 +864,14 @@ it("merges one Person into another after a confirmation", async () => {
   expect(server.requests).toContainEqual({ method: "POST", url: "/api/people/neil/merge", body: { into: "buzz" } });
   expect(await screen.findByRole("button", { name: "Face 1: Buzz Aldrin" })).toBeInTheDocument();
   await waitFor(() => expect(within(personRow(panel, "Buzz Aldrin")).getByText("5 Faces")).toBeInTheDocument());
-  expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument();
+  expect(within(panel).queryByText("Neil", { selector: ".name-row-name" })).not.toBeInTheDocument();
 });
 
 it("deletes a Person after a confirmation, leaving their Faces unnamed, and does nothing when it is declined", async () => {
   const server = fakeFaceServer(crew, crewPeople());
   const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
   const deleteNeil = () => userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Delete Neil" }));
 
@@ -747,22 +882,23 @@ it("deletes a Person after a confirmation, leaving their Faces unnamed, and does
   expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining("Delete Neil?"));
   expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/people/neil", body: undefined });
   expect(await screen.findByRole("button", { name: "Face 1" })).toBeInTheDocument();
-  await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".person-name" })).not.toBeInTheDocument());
+  await waitFor(() => expect(within(panel).queryByText("Neil", { selector: ".name-row-name" })).not.toBeInTheDocument());
 });
 
-it('deletes all face data after a confirmation, emptying the People panel', async () => {
-  const server = fakeFaceServer(crew, crewPeople());
+it('deletes all face and pet data after a confirmation, emptying the People and pets panel and unnaming the Animals', async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), [{ id: "rex", name: "Rex", animalCount: 1 }]);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   await openCrew();
-  const panel = await openPeoplePanel();
+  const panel = await openPeopleAndPetsPanel();
   await within(panel).findByText("Neil");
 
-  await userEvent.click(within(panel).getByRole("button", { name: "Delete all face data" }));
+  await userEvent.click(within(panel).getByRole("button", { name: "Delete all face and pet data" }));
 
-  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Delete all face data?"));
-  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/face-data", body: undefined });
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Delete all face and pet data?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/face-and-pet-data", body: undefined });
   expect(await within(panel).findByText("No one has been named yet.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Face 1" })).toBeInTheDocument();
+  expect(animalBox("Animal 1: dog")).not.toHaveTextContent("Rex");
 });
 
 /** The crew with Face 2 suggested as Michael Collins and Face 3 in a Stranger. */
@@ -822,4 +958,363 @@ it("naming a Face drops the same Suggestion from the Photo's other Faces", async
 
   expect(await screen.findByRole("button", { name: "Face 3: Michael Collins" })).toBeInTheDocument();
   expect(faceBox("Face 2")).not.toHaveTextContent("Michael Collins");
+});
+
+/** The crew with a dog named Rex and an unnamed cat beside them. */
+const crewWithPets: Analysis = {
+  ...crew,
+  animals: [
+    { id: "animal-a", species: "dog", box: { x: 0.3, y: 0.6, width: 0.25, height: 0.3 }, pet: { id: "rex", name: "Rex" } },
+    { id: "animal-b", species: "cat", box: { x: 0.7, y: 0.6, width: 0.2, height: 0.3 } },
+  ],
+};
+
+const crewPets = (): PetSummary[] => [
+  { id: "rex", name: "Rex", animalCount: 4 },
+  { id: "maxi", name: "Maxine", animalCount: 2 },
+];
+
+const animalBox = (name: string | RegExp) =>
+  within(screen.getByRole("list", { name: "Animal boxes" })).getByRole("button", { name });
+
+it("labels each Animal box with its species, and its Pet's name once named", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+
+  expect(animalBox("Animal 1: Rex (dog)")).toHaveTextContent("Rex");
+  expect(animalBox("Animal 1: Rex (dog)")).toHaveTextContent("dog");
+  expect(animalBox("Animal 2: cat")).toHaveTextContent("cat");
+});
+
+it("names an Animal by clicking its box, with names autocompleting from Pets only", async () => {
+  // Max is a Person, Maxine a Pet: only Maxine is offered for an Animal.
+  const server = fakeFaceServer(crewWithPets, [...crewPeople(), { id: "max", name: "Max", faceCount: 1 }], crewPets());
+  await openCrew();
+
+  await userEvent.click(animalBox("Animal 2: cat"));
+  const form = screen.getByRole("form", { name: "Name Animal 2" });
+  await userEvent.type(within(form).getByRole("combobox", { name: "Name" }), "max");
+  const options = within(form).getByRole("listbox", { name: "Pets" });
+  expect(within(options).getAllByRole("option").map((o) => o.textContent)).toEqual(["Maxine"]);
+  await userEvent.click(within(options).getByRole("option", { name: "Maxine" }));
+
+  expect(server.requests).toContainEqual({ method: "PUT", url: "/api/animals/animal-b/pet", body: { name: "Maxine" } });
+  expect(await screen.findByRole("button", { name: "Animal 2: Maxine (cat)" })).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "Name Animal 2" })).not.toBeInTheDocument();
+});
+
+it("names an Animal with a new name, which creates a Pet", async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(animalBox("Animal 2: cat"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Tom{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PUT", url: "/api/animals/animal-b/pet", body: { name: "Tom" } });
+  expect(await screen.findByRole("button", { name: "Animal 2: Tom (cat)" })).toBeInTheDocument();
+});
+
+it("never offers a Pet's name for a Face", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(faceBox("Face 2"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Max");
+
+  expect(screen.queryByRole("option", { name: "Maxine" })).not.toBeInTheDocument();
+});
+
+it("starts an Animal's name field with its Pet's name", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(animalBox("Animal 1: Rex (dog)"));
+
+  expect(screen.getByRole("combobox", { name: "Name" })).toHaveValue("Rex");
+});
+
+it('removes an Animal box marked "Not a pet" and renumbers the rest', async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(animalBox("Animal 1: Rex (dog)"));
+  await userEvent.click(screen.getByRole("button", { name: "Not a pet" }));
+
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/animals/animal-a/not-a-pet", body: undefined });
+  await screen.findByRole("region", { name: "Pets (1)" });
+  const boxes = within(screen.getByRole("list", { name: "Animal boxes" })).getAllByRole("button");
+  expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual(["Animal 1: cat"]);
+});
+
+it("shows the server's message when an Animal can no longer be named", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+  vi.mocked(fetch).mockImplementation(async (input) =>
+    String(input) === "/api/pets"
+      ? Response.json({ pets: [] })
+      : Response.json({ error: { message: "This Animal is no longer stored. Open the Photo again." } }, { status: 404 }),
+  );
+
+  await userEvent.click(animalBox("Animal 2: cat"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Tom{Enter}");
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("This Animal is no longer stored. Open the Photo again.");
+  expect(animalBox("Animal 2: cat")).toBeInTheDocument();
+});
+
+it("lists Pets with their Animal counts in their own section of the People and pets panel, showing no Photos", async () => {
+  fakeFaceServer(crew, crewPeople(), crewPets());
+  render(<App />);
+
+  const panel = await openPeopleAndPetsPanel();
+
+  expect(within(panel).getByRole("heading", { name: "People and pets" })).toBeInTheDocument();
+  const pets = within(panel).getByRole("region", { name: "Pets" });
+  expect(await within(pets).findByText("Rex")).toBeInTheDocument();
+  expect(within(petRow(panel, "Rex")).getByText("4 Animals")).toBeInTheDocument();
+  expect(within(petRow(panel, "Maxine")).getByText("2 Animals")).toBeInTheDocument();
+  expect(within(within(panel).getByRole("region", { name: "People" })).getByText("Buzz Aldrin")).toBeInTheDocument();
+  expect(within(panel).queryByRole("img")).not.toBeInTheDocument();
+});
+
+it("renames a Pet, renaming its Animals in the opened Photo and leaving Faces alone", async () => {
+  // Rex the dog and Rex the Person share an id here only to show that a Pet's change never reaches a Face.
+  const server = fakeFaceServer(
+    { ...crewWithPets, faces: [{ ...crew.faces[0]!, person: { id: "rex", name: "Rex" } }] },
+    [{ id: "rex", name: "Rex", faceCount: 1 }],
+    crewPets(),
+  );
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Rename Rex" }));
+  const field = within(panel).getByRole("textbox", { name: "New name for Rex" });
+  await userEvent.clear(field);
+  await userEvent.type(field, "Baron{Enter}");
+
+  expect(server.requests).toContainEqual({ method: "PATCH", url: "/api/pets/rex", body: { name: "Baron" } });
+  expect(await screen.findByRole("button", { name: "Animal 1: Baron (dog)" })).toBeInTheDocument();
+  expect(faceBox("Face 1: Rex")).toBeInTheDocument();
+  expect(await within(petRow(panel, "Baron")).findByText("4 Animals")).toBeInTheDocument();
+});
+
+it("merges one Pet into another Pet only, after a confirmation", async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Merge Rex" }));
+  const into = within(panel).getByRole("combobox", { name: "Merge Rex into" });
+  // Only Pets are offered: no Person.
+  expect(within(into).getAllByRole("option").map((o) => o.textContent)).toEqual(["Maxine"]);
+  await userEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Merge Rex into Maxine?"));
+  expect(server.requests).toContainEqual({ method: "POST", url: "/api/pets/rex/merge", body: { into: "maxi" } });
+  expect(await screen.findByRole("button", { name: "Animal 1: Maxine (dog)" })).toBeInTheDocument();
+  await waitFor(() => expect(within(petRow(panel, "Maxine")).getByText("6 Animals")).toBeInTheDocument());
+  expect(within(panel).queryByText("Rex", { selector: ".name-row-name" })).not.toBeInTheDocument();
+});
+
+it("deletes a Pet after a confirmation, leaving its Animals unnamed", async () => {
+  const server = fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Delete Rex?"));
+  expect(server.requests).toContainEqual({ method: "DELETE", url: "/api/pets/rex", body: undefined });
+  expect(await screen.findByRole("button", { name: "Animal 1: dog" })).toBeInTheDocument();
+  await waitFor(() => expect(within(panel).queryByText("Rex", { selector: ".name-row-name" })).not.toBeInTheDocument());
+  expect(within(panel).getByText("Buzz Aldrin")).toBeInTheDocument();
+});
+
+it("shows the server's message when a Pet can't be renamed", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Maxine");
+  vi.mocked(fetch).mockResolvedValueOnce(
+    Response.json({ error: { message: "A Pet is already called Maxine. Merge them instead." } }, { status: 409 }),
+  );
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Rename Rex" }));
+  const field = within(panel).getByRole("textbox", { name: "New name for Rex" });
+  await userEvent.clear(field);
+  await userEvent.type(field, "maxine{Enter}");
+
+  expect(await within(panel).findByRole("alert")).toHaveTextContent("A Pet is already called Maxine. Merge them instead.");
+  expect(animalBox("Animal 1: Rex (dog)")).toBeInTheDocument();
+});
+
+/** Left to right: a dog in an Unknown pet, Rex the dog, and a cat suggested as Maxine. */
+const crewWithPetSuggestion: Analysis = {
+  ...crewWithPets,
+  animals: [
+    {
+      id: "animal-c",
+      species: "dog",
+      box: { x: 0.05, y: 0.7, width: 0.15, height: 0.2 },
+      unknownPet: { label: "Unknown pet 2", photoCount: 5 },
+    },
+    crewWithPets.animals[0]!,
+    { ...crewWithPets.animals[1]!, suggestion: { id: "maxi", name: "Maxine" } },
+  ],
+};
+
+it("shows a Suggestion on its Animal's box, and ✓ names the Animal", async () => {
+  const server = fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+  expect(animalBox("Animal 3: Maxine? (cat, suggested)")).toHaveTextContent("Maxine?");
+
+  await userEvent.click(screen.getByRole("button", { name: "✓ Animal 3 is Maxine" }));
+
+  expect(server.requests).toContainEqual({
+    method: "POST",
+    url: "/api/animals/animal-b/suggestion/confirm",
+    body: { petId: "maxi" },
+  });
+  expect(await screen.findByRole("button", { name: "Animal 3: Maxine (cat)" })).toHaveTextContent("Maxine");
+  expect(screen.queryByRole("button", { name: /✓/ })).not.toBeInTheDocument();
+});
+
+it("✕ rejects a Pet Suggestion, leaving the Animal unnamed", async () => {
+  const server = fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(screen.getByRole("button", { name: "✕ Animal 3 is not Maxine" }));
+
+  expect(server.requests).toContainEqual({
+    method: "POST",
+    url: "/api/animals/animal-b/suggestion/reject",
+    body: { petId: "maxi" },
+  });
+  expect(await screen.findByRole("button", { name: "Animal 3: cat" })).not.toHaveTextContent("Maxine");
+  expect(screen.queryByRole("button", { name: /✕/ })).not.toBeInTheDocument();
+});
+
+it("labels an Animal in an Unknown pet with the Unknown pet and how many Photos it spans", async () => {
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+
+  expect(animalBox("Animal 1: Unknown pet 2, in 5 Photos (dog)")).toHaveTextContent("Unknown pet 2, in 5 Photos");
+});
+
+it("naming an Animal drops the same Suggestion from the Photo's other Animals", async () => {
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  await openCrew();
+
+  await userEvent.click(animalBox("Animal 1: Unknown pet 2, in 5 Photos (dog)"));
+  await userEvent.type(screen.getByRole("combobox", { name: "Name" }), "Maxine{Enter}");
+
+  expect(await screen.findByRole("button", { name: "Animal 1: Maxine (dog)" })).toBeInTheDocument();
+  expect(animalBox("Animal 3: cat")).not.toHaveTextContent("Maxine");
+});
+
+it("deleting a Pet drops its Suggestion from the opened Photo", async () => {
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets());
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Maxine");
+
+  await userEvent.click(within(petRow(panel, "Maxine")).getByRole("button", { name: "Delete Maxine" }));
+
+  expect(await screen.findByRole("button", { name: "Animal 3: cat" })).not.toHaveTextContent("Maxine");
+  expect(screen.queryByRole("button", { name: /✓/ })).not.toBeInTheDocument();
+});
+
+it("deleting a Pet shows its Animals as the server now has them, such as in an Unknown pet", async () => {
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets(), {
+    animals: [
+      { ...crewWithPets.animals[0]!, pet: undefined, unknownPet: { label: "Unknown pet 9", photoCount: 4 } },
+      { ...crewWithPets.animals[1]!, suggestion: { id: "maxi", name: "Maxine" } },
+    ].map(({ pet: _pet, ...animal }) => animal),
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Rex");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
+
+  expect(await screen.findByRole("button", { name: "Animal 1: Unknown pet 9, in 4 Photos (dog)" })).toBeInTheDocument();
+  expect(animalBox("Animal 2: Maxine? (cat, suggested)")).toBeInTheDocument();
+});
+
+it("merging a Pet shows the opened Photo's Animals as the server now has them", async () => {
+  // Rex merges into Maxine: Animal 2 can no longer be suggested as Maxine, now named in the Photo.
+  fakeFaceServer(crewWithPetSuggestion, crewPeople(), crewPets(), {
+    animals: [
+      crewWithPetSuggestion.animals[0]!,
+      { ...crewWithPetSuggestion.animals[1]!, pet: { id: "maxi", name: "Maxine" } },
+      crewWithPets.animals[1]!,
+    ],
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Rex");
+
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Merge Rex" }));
+  await userEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+
+  expect(await screen.findByRole("button", { name: "Animal 2: Maxine (dog)" })).toBeInTheDocument();
+  await waitFor(() => expect(animalBox("Animal 3: cat")).not.toHaveTextContent("Maxine"));
+});
+
+it("deleting a Person shows their Faces as the server now has them, such as in a Stranger", async () => {
+  fakeFaceServer(crew, crewPeople(), [], {
+    faces: [
+      { id: "face-a", box: crew.faces[0]!.box, stranger: { label: "Unknown 9", photoCount: 2 } },
+      crew.faces[1]!,
+      crew.faces[2]!,
+    ],
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Neil");
+
+  await userEvent.click(within(personRow(panel, "Neil")).getByRole("button", { name: "Delete Neil" }));
+
+  expect(await screen.findByRole("button", { name: "Face 1: Unknown 9, in 2 Photos" })).toBeInTheDocument();
+});
+
+it("keeps a later Photo's Animals when the earlier Photo's state arrives after it is replaced", async () => {
+  const later: Analysis = {
+    ...analysis,
+    photo: { name: "garden.jpg", sizeBytes: 2000, mimeType: "image/jpeg" },
+    animals: [{ id: "animal-z", species: "cat", box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 } }],
+  };
+  fakeFaceServer(crewWithPets, crewPeople(), crewPets());
+  let respond!: (res: Response) => void;
+  const fake = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    if (String(input) === "/api/animals/animal-a/photo") return new Promise((resolve) => (respond = resolve));
+    if (String(input) === "/api/analyze" && (init?.body as FormData).get("photo") instanceof File) {
+      const name = ((init?.body as FormData).get("photo") as File).name;
+      if (name === "garden.jpg") return Response.json(later);
+    }
+    return fake(input, init);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await openCrew();
+  const panel = await openPeopleAndPetsPanel();
+  await within(panel).findByText("Rex");
+  await userEvent.click(within(petRow(panel, "Rex")).getByRole("button", { name: "Delete Rex" }));
+  await waitFor(() => expect(respond).toBeDefined());
+
+  await userEvent.upload(screen.getByLabelText(/choose a photo/i), new File(["jpeg"], "garden.jpg", { type: "image/jpeg" }));
+  await screen.findByRole("img", { name: "garden.jpg" });
+  respond(Response.json({ animals: crewWithPets.animals }));
+
+  await waitFor(() => expect(within(screen.getByRole("list", { name: "Animal boxes" })).getAllByRole("button")).toHaveLength(1));
+  expect(animalBox("Animal 1: cat")).toBeInTheDocument();
 });

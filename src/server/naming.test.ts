@@ -2,14 +2,14 @@ import { readdir } from "node:fs/promises";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
-import { modelsDir, openFaceApi, type FaceApi } from "./testing/face-api.ts";
+import { modelsDir, openApi, type Api } from "./testing/api.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
 // crew.jpg shows three Faces, left to right: Armstrong, Collins, Aldrin.
 
 let exiftool: ExifTool;
 let faceDetector: FaceDetector;
-let api: FaceApi;
+let api: Api;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
@@ -21,7 +21,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  api = await openFaceApi({ exiftool, faceDetector });
+  api = await openApi({ exiftool, faceDetector });
 });
 
 afterEach(async () => {
@@ -151,13 +151,13 @@ describe("People", () => {
     expect((await api.call("DELETE", `/api/people/${collins.id}`)).status).toBe(404);
   });
 
-  it('"Delete all face data" leaves faces.db empty', async () => {
+  it('"Delete all face and pet data" leaves faces.db empty', async () => {
     const faces = (await api.upload("crew.jpg")).faces;
     await api.nameFace(faces[0]!.id, "Neil");
     await api.markNotAFace(faces[1]!.id);
     await api.rejectSuggestion(faces[2]!.id, (await api.nameFace(faces[2]!.id, "Buzz")).id);
 
-    await api.deleteAllFaceData();
+    await api.deleteAllFaceAndPetData();
 
     const tables = api.storedRows();
     expect(Object.keys(tables)).toEqual(expect.arrayContaining(["people", "faces", "rejected_suggestions"]));
@@ -247,10 +247,25 @@ describe("what is kept (ADR-0001, ADR-0002)", () => {
       // 512 float32s: an embedding, not pixels.
       expect((row["embedding"] as Uint8Array).byteLength).toBe(512 * 4);
     }
-    // A Stranger is only a number, a rejected Suggestion only a pair of ids, and
-    // a Photo only its hash and the version of the models that read it.
-    expect(Object.keys(api.storedRows()).sort()).toEqual(["faces", "people", "photos", "rejected_suggestions", "strangers"]);
+    // A Stranger is only a number, a rejected Suggestion or a named Stranger only a pair of ids, and
+    // a Photo only its hash and the version of the models that read it. Pet data
+    // has its own tables (pet-naming.test.ts) and nothing else is kept.
+    expect(Object.keys(api.storedRows()).sort()).toEqual([
+      "animal_photos",
+      "animals",
+      "faces",
+      "named_strangers",
+      "named_unknown_pets",
+      "people",
+      "pets",
+      "photos",
+      "rejected_pet_suggestions",
+      "rejected_suggestions",
+      "strangers",
+      "unknown_pets",
+    ]);
     for (const row of api.storedRows()["strangers"]!) expect(Object.keys(row)).toEqual(["id"]);
+    for (const row of api.storedRows()["named_strangers"]!) expect(Object.keys(row)).toEqual(["stranger_id", "person_id"]);
     for (const row of api.storedRows()["photos"]!) expect(Object.keys(row)).toEqual(["sha256", "model_version"]);
   });
 });

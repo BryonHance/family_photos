@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { Face, PersonRef, PersonSummary, StrangerRef } from "../shared/analysis.ts";
-import { messageOf } from "./faceApi.ts";
+import { messageOf } from "./api.ts";
 
 /** Who a Face shows, as far as the viewer knows: exactly one of these. */
 type Who =
@@ -90,8 +90,8 @@ export function FaceBoxes({
             </button>
             {who.state === "suggested" && (
               <SuggestionButtons
-                number={i + 1}
-                person={who.person}
+                subject={`Face ${i + 1}`}
+                suggested={who.person}
                 onConfirm={() => onConfirm(face.id, who.person)}
                 onReject={() => onReject(face.id, who.person)}
               />
@@ -103,15 +103,16 @@ export function FaceBoxes({
   );
 }
 
-/** ✓ and ✕ for a Suggestion. */
-function SuggestionButtons({
-  number,
-  person,
+/** ✓ and ✕ for a Suggestion of a Person for a Face, or of a Pet for an Animal. */
+export function SuggestionButtons({
+  subject,
+  suggested,
   onConfirm,
   onReject,
 }: {
-  number: number;
-  person: PersonRef;
+  /** What the Suggestion is for, such as "Face 2" or "Animal 1". */
+  subject: string;
+  suggested: { name: string };
   onConfirm: () => Promise<void>;
   onReject: () => Promise<void>;
 }) {
@@ -128,8 +129,8 @@ function SuggestionButtons({
     <span className="suggestion-actions">
       <button
         type="button"
-        aria-label={`✓ Face ${number} is ${person.name}`}
-        title={`Yes, this is ${person.name}`}
+        aria-label={`✓ ${subject} is ${suggested.name}`}
+        title={`Yes, this is ${suggested.name}`}
         disabled={busy}
         onClick={() => void run(onConfirm)}
       >
@@ -137,8 +138,8 @@ function SuggestionButtons({
       </button>
       <button
         type="button"
-        aria-label={`✕ Face ${number} is not ${person.name}`}
-        title={`No, this is not ${person.name}`}
+        aria-label={`✕ ${subject} is not ${suggested.name}`}
+        title={`No, this is not ${suggested.name}`}
         disabled={busy}
         onClick={() => void run(onReject)}
       >
@@ -187,14 +188,16 @@ export function FacesSection({
         </p>
       )}
       {selected ? (
-        <FaceForm
+        <NameForm
           // A fresh form for each Face, starting from its own name.
           key={selected.id}
-          face={selected}
-          number={index + 1}
-          people={people}
+          label={`Name Face ${index + 1}`}
+          initialName={selected.person?.name ?? ""}
+          names={people}
+          namesLabel="People"
+          dismissLabel="Not a face"
           onName={(name) => onName(selected.id, name)}
-          onNotAFace={() => onNotAFace(selected.id)}
+          onDismiss={() => onNotAFace(selected.id)}
           onClose={onClose}
         />
       ) : (
@@ -204,28 +207,37 @@ export function FacesSection({
   );
 }
 
-/** Names a Face, with names autocompleting from existing People, or marks it "Not a face". */
-function FaceForm({
-  face,
-  number,
-  people,
+/**
+ * Names a Face or an Animal, with names autocompleting from `names` (People for
+ * a Face, Pets for an Animal, never both), or dismisses it ("Not a face", "Not a pet").
+ */
+export function NameForm({
+  label,
+  initialName,
+  names,
+  namesLabel,
+  dismissLabel,
   onName,
-  onNotAFace,
+  onDismiss,
   onClose,
 }: {
-  face: Face;
-  number: number;
-  people: PersonSummary[];
+  /** The form's accessible name, such as "Name Face 3". */
+  label: string;
+  initialName: string;
+  names: { id: string; name: string }[];
+  /** The autocomplete list's accessible name: "People" or "Pets". */
+  namesLabel: string;
+  dismissLabel: string;
   onName: (name: string) => Promise<void>;
-  onNotAFace: () => Promise<void>;
+  onDismiss: () => Promise<void>;
   onClose: () => void;
 }) {
   const listId = useId();
-  const [name, setName] = useState(face.person?.name ?? "");
+  const [name, setName] = useState(initialName);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const needle = name.trim().toLowerCase();
-  const matches = needle === "" ? [] : people.filter((p) => p.name.toLowerCase().includes(needle));
+  const matches = needle === "" ? [] : names.filter((n) => n.name.toLowerCase().includes(needle));
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -246,7 +258,7 @@ function FaceForm({
   return (
     <form
       className="face-form"
-      aria-label={`Name Face ${number}`}
+      aria-label={label}
       onSubmit={(event) => {
         event.preventDefault();
         save(name);
@@ -267,10 +279,10 @@ function FaceForm({
         />
       </label>
       {matches.length > 0 && (
-        <ul role="listbox" id={listId} aria-label="People" className="name-options">
-          {matches.map((person) => (
-            <li key={person.id} role="option" aria-selected={false} onClick={() => save(person.name)}>
-              {person.name}
+        <ul role="listbox" id={listId} aria-label={namesLabel} className="name-options">
+          {matches.map((option) => (
+            <li key={option.id} role="option" aria-selected={false} onClick={() => save(option.name)}>
+              {option.name}
             </li>
           ))}
         </ul>
@@ -279,8 +291,8 @@ function FaceForm({
         <button type="submit" disabled={busy || needle === ""}>
           Save
         </button>
-        <button type="button" disabled={busy} onClick={() => void run(onNotAFace)}>
-          Not a face
+        <button type="button" disabled={busy} onClick={() => void run(onDismiss)}>
+          {dismissLabel}
         </button>
         <button type="button" disabled={busy} onClick={onClose}>
           Cancel

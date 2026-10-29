@@ -2,9 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExifTool } from "exiftool-vendored";
-import type { Analysis, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
-import type { FaceDetector, PhotoPixels } from "./faces/detector.ts";
+import type { Analysis, Animal, Face, Field, Section, SectionName, Summary } from "../shared/analysis.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import type { FaceStore } from "./faces/store.ts";
+import type { AnimalDetector } from "./pets/detector.ts";
 import type { Pixels } from "./pixels.ts";
 import { decodeUprightHeic, isHeic, previewFor } from "./preview.ts";
 import {
@@ -18,6 +19,7 @@ import {
   type LongTag,
   type Tags,
 } from "./tags.ts";
+import { decodeUpright, type PhotoPixels } from "./upright.ts";
 import { deriveWarnings, STRUCTURAL_WARNINGS_ONLY } from "./warnings.ts";
 
 export type AnalyzerConfig = {
@@ -26,8 +28,13 @@ export type AnalyzerConfig = {
   tempDir: string;
   /** Finds the Faces in each Photo and computes their embeddings. */
   faceDetector: FaceDetector;
-  /** Keeps each Face's box, embedding and Person, by the Photo's hash, and never the Photo (ADR-0002). */
+  /**
+   * Keeps each Face's box, embedding and Person, and each Animal's box,
+   * species, embedding and Pet, by the Photo's hash, and never the Photo (ADR-0002, ADR-0003).
+   */
   faceStore: FaceStore;
+  /** Finds the cats and dogs in each Photo and computes their embeddings. */
+  animalDetector: AnimalDetector;
 };
 
 export type PhotoUpload = {
@@ -170,13 +177,16 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     return fields ? [{ name, fields }] : [];
   });
 
-  // A HEIC is decoded once, for both its preview and its Faces.
+  // The Photo is decoded and turned upright once. A HEIC's full-size pixels make
+  // its preview; the same pixels, shrunk, are what Faces and Animals are found in.
   const uprightHeic = isHeic(photoMimeType)
     ? await decodeUprightHeic(photo.bytes, {
         exif: numericValue(tags, "EXIF:IFD0:Orientation"),
         heifTransform: "QuickTime:Rotation" in tags || "QuickTime:Mirroring" in tags,
       })
     : undefined;
+  const upright = await decodeUprightPhoto(photoMimeType, photo.bytes, uprightHeic);
+  const sha256 = createHash("sha256").update(photo.bytes).digest("hex");
 
   return {
     photo: { name: photo.name, sizeBytes: photo.bytes.byteLength, mimeType: photoMimeType },
@@ -184,7 +194,8 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
     warnings: deriveWarnings(tags, sections, photo.lastModified),
     summary: summarize(tags),
     sections,
-    faces: await findFaces(config, photoMimeType, photo.bytes, uprightHeic),
+    faces: await findFaces(config, sha256, upright),
+    animals: await findAnimals(config, sha256, upright),
   };
 }
 
@@ -192,25 +203,47 @@ export async function analyzePhoto(config: AnalyzerConfig, photo: PhotoUpload): 
 const SHARP_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 /**
- * A Photo seen before, under the same model version, returns its stored Faces
- * without being detected again. JPEG, PNG and WebP go to sharp; a HEIC arrives
- * already decoded. TIFF and RAW get no Faces.
+ * The upright Photo as RGB, shared by the face and pet pipelines. JPEG, PNG and
+ * WebP go to sharp; a HEIC arrives already decoded. Undefined for TIFF and RAW,
+ * which get no Faces or Animals, and for a Photo too damaged to decode, whose Warnings say why.
  */
-async function findFaces(
-  { faceDetector, faceStore }: AnalyzerConfig,
+async function decodeUprightPhoto(
   mimeType: string,
   bytes: Uint8Array,
   uprightHeic: Pixels<4> | undefined,
-): Promise<Face[]> {
-  const pixels: PhotoPixels | undefined = uprightHeic
+): Promise<Pixels<3> | undefined> {
+  const photo: PhotoPixels | undefined = uprightHeic
     ? { kind: "raw", ...uprightHeic }
     : SHARP_TYPES.has(mimeType)
       ? { kind: "encoded", bytes }
       : undefined;
-  if (!pixels) return [];
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return photo && decodeUpright(photo);
+}
+
+/** A Photo seen before, under the same model version, returns its stored Faces without being detected again. */
+async function findFaces(
+  { faceDetector, faceStore }: AnalyzerConfig,
+  sha256: string,
+  upright: Pixels<3> | undefined,
+): Promise<Face[]> {
+  if (!upright) return [];
   return faceStore.facesOfPhoto({ sha256, modelVersion: faceDetector.modelVersion }, async () =>
-    (await faceDetector.detect(pixels)).map(({ box, embedding }) => ({ box, embedding })),
+    (await faceDetector.detect({ kind: "raw", ...upright })).map(({ box, embedding }) => ({ box, embedding })),
+  );
+}
+
+/**
+ * A Photo seen before, under the same pet model version, returns its stored
+ * Animals without being detected again. Faces and Animals follow their own model versions.
+ */
+async function findAnimals(
+  { animalDetector, faceStore }: AnalyzerConfig,
+  sha256: string,
+  upright: Pixels<3> | undefined,
+): Promise<Animal[]> {
+  if (!upright) return [];
+  return faceStore.pets.animalsOfPhoto({ sha256, modelVersion: animalDetector.modelVersion }, async () =>
+    (await animalDetector.detect(upright)).map(({ species, box, embedding }) => ({ species, box, embedding })),
   );
 }
 

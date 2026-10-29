@@ -60,7 +60,39 @@ export type Face = {
 /** A Stranger as a Face refers to them. */
 export type StrangerRef = { label: string; photoCount: number };
 
-/** A Person as the People panel lists them. */
+/** What the viewer took an Animal for. A hint for the user, not a fact about a Pet. */
+export type Species = "cat" | "dog";
+
+/** A Pet as an Animal refers to them. */
+export type PetRef = { id: string; name: string };
+
+/**
+ * A region of the Photo that shows one cat or dog, its whole body (GLOSSARY.md),
+ * stored so that it can be named (ADR-0003). It has at most one of `pet`,
+ * `suggestion` and `unknownPet`.
+ */
+export type Animal = {
+  id: string;
+  species: Species;
+  box: Box;
+  /** Present once the Animal is named. */
+  pet?: PetRef;
+  /** Which Pet the viewer thinks the Animal shows, waiting to be confirmed or rejected. Never beside `pet`. */
+  suggestion?: PetRef;
+  /**
+   * The Unknown pet an unnamed Animal without a Suggestion belongs to, once that
+   * Unknown pet spans at least 2 Photos: "Unknown pet 2", in `photoCount` Photos.
+   */
+  unknownPet?: UnknownPetRef;
+};
+
+/** An Unknown pet as an Animal refers to it. */
+export type UnknownPetRef = { label: string; photoCount: number };
+
+/** A Pet as the People and pets panel lists them. */
+export type PetSummary = PetRef & { animalCount: number };
+
+/** A Person as the People and pets panel lists them. */
 export type PersonSummary = PersonRef & { faceCount: number };
 
 export type Analysis = {
@@ -71,6 +103,11 @@ export type Analysis = {
   sections: Section[];
   /** Ordered left to right. Empty when there are none, and for TIFF and RAW. Faces marked "Not a face" are left out. */
   faces: Face[];
+  /**
+   * Cats and dogs, ordered left to right. Empty when there are none, and for
+   * TIFF and RAW. Animals marked "Not a pet" are left out.
+   */
+  animals: Animal[];
 };
 
 export type AnalyzeErrorKind = "no-photo" | "too-large" | "unsupported-file";

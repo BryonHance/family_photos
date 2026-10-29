@@ -10,7 +10,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadFaceDetector } from "../src/server/faces/detector.ts";
-import { cosine } from "../src/server/faces/similarity.ts";
+import { cosine } from "../src/server/recognition/similarity.ts";
 import { STRANGER_THRESHOLD, SUGGESTION_THRESHOLD } from "../src/server/faces/thresholds.ts";
 
 const sampleDir = process.argv[2];

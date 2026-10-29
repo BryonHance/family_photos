@@ -8,16 +8,19 @@ import type { Analysis, Section } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
 import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
 import { openFaceStore } from "./faces/store.ts";
+import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
 let exiftool: ExifTool;
 let tempDir: string;
 let faceDetector: FaceDetector;
+let animalDetector: AnimalDetector;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
   faceDetector = await loadFaceDetector(join(import.meta.dirname, "../../models"));
+  animalDetector = await loadAnimalDetector(join(import.meta.dirname, "../../models"));
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
 });
 
@@ -29,7 +32,14 @@ afterAll(async () => {
 const testUploadLimit = 5_000;
 
 function send(form: FormData, maxUploadBytes = testUploadLimit) {
-  const app = createApp({ exiftool, tempDir, faceDetector, faceStore: openFaceStore(":memory:"), maxUploadBytes });
+  const app = createApp({
+    exiftool,
+    tempDir,
+    faceDetector,
+    faceStore: openFaceStore(":memory:"),
+    animalDetector,
+    maxUploadBytes,
+  });
   return app.request("/api/analyze", { method: "POST", body: form });
 }
 

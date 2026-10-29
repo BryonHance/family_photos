@@ -1,29 +1,6 @@
-// The browser's side of the face routes in src/server/faces/api.ts.
+// The browser's side of the face routes in src/server/faces/api.ts. The pet routes are in petApi.ts.
 import type { Face, PersonRef, PersonSummary } from "../shared/analysis.ts";
-
-/** A face route refused the request; the message is the server's, ready to show. */
-export class FaceApiError extends Error {}
-
-/** What to show the user for a failed request. */
-export const messageOf = (failure: unknown): string => (failure instanceof Error ? failure.message : String(failure));
-
-async function send(method: string, url: string, body?: unknown): Promise<Response> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    throw new FaceApiError("The server could not be reached. Check the connection and try again.");
-  }
-  if (!res.ok) {
-    const problem = (await res.json().catch(() => undefined)) as { error?: { message?: string } } | undefined;
-    throw new FaceApiError(problem?.error?.message ?? "The server could not do that. Try again.");
-  }
-  return res;
-}
+import { send } from "./api.ts";
 
 export const faceApi = {
   nameFace: async (faceId: string, name: string) =>
@@ -33,6 +10,9 @@ export const faceApi = {
   /** Returns the Face as it now stands. */
   rejectSuggestion: async (faceId: string, personId: string) =>
     (await (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/suggestion/reject`, { personId })).json()) as Face,
+  /** The Faces of the Photo a Face is in, as the server now has them. */
+  facesOfPhotoOf: async (faceId: string) =>
+    ((await (await send("GET", `/api/faces/${encodeURIComponent(faceId)}/photo`)).json()) as { faces: Face[] }).faces,
   markNotAFace: async (faceId: string) => void (await send("POST", `/api/faces/${encodeURIComponent(faceId)}/not-a-face`)),
   people: async () => ((await (await send("GET", "/api/people")).json()) as { people: PersonSummary[] }).people,
   renamePerson: async (personId: string, name: string) =>
@@ -40,5 +20,6 @@ export const faceApi = {
   mergePeople: async (personId: string, intoPersonId: string) =>
     void (await send("POST", `/api/people/${encodeURIComponent(personId)}/merge`, { into: intoPersonId })),
   deletePerson: async (personId: string) => void (await send("DELETE", `/api/people/${encodeURIComponent(personId)}`)),
-  deleteAllFaceData: async () => void (await send("DELETE", "/api/face-data")),
+  /** Face and pet data go together (ADR-0003). */
+  deleteAllFaceAndPetData: async () => void (await send("DELETE", "/api/face-and-pet-data")),
 };

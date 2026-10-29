@@ -12,12 +12,26 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.2
         with:
           cache: true
-      # The tests run the real face models. Cached by their checksum list; the
-      # fetch script re-verifies a cached copy and downloads again if it is wrong.
+      # The tests run the real face and pet models. Each is cached by its own
+      # checksum list, as they are versioned separately; the fetch scripts
+      # re-verify a cached copy and download again if it is wrong.
       - uses: actions/cache@v4
         with:
-          path: models
+          path: models/*.onnx
           key: face-models-${{ hashFiles('src/server/faces/models.sha256') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            models/pets
+            !models/pets/avito_clip_l.onnx*
+          key: pet-models-${{ hashFiles('src/server/pets/models.sha256') }}
+      # The exported Avito model, keyed by export-avito.py (which pins the
+      # revision) and the lock file (which pins PyTorch). On a miss, `pixi run
+      # models` exports it again; on a hit it only re-verifies the recorded SHA-256.
+      - uses: actions/cache@v4
+        with:
+          path: models/pets/avito_clip_l.onnx*
+          key: avito-model-${{ hashFiles('scripts/export-avito.py', 'pixi.lock') }}
       - run: pixi run models
       - run: pixi run typecheck
       - run: pixi run test
