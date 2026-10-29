@@ -6,9 +6,10 @@ import jpeg from "jpeg-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis, Section } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
-import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import { openFaceStore } from "./faces/store.ts";
-import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
+import type { AnimalDetector } from "./pets/detector.ts";
+import { loadTestAnimalDetector, loadTestFaceDetector } from "./testing/models.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
@@ -19,8 +20,8 @@ let animalDetector: AnimalDetector;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
-  faceDetector = await loadFaceDetector(join(import.meta.dirname, "../../models"));
-  animalDetector = await loadAnimalDetector(join(import.meta.dirname, "../../models"));
+  faceDetector = await loadTestFaceDetector();
+  animalDetector = await loadTestAnimalDetector();
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
 });
 

@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
-import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import { openFaceStore } from "./faces/store.ts";
-import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
+import type { AnimalDetector } from "./pets/detector.ts";
 import { createProductionApp } from "./production.ts";
+import { loadTestAnimalDetector, loadTestFaceDetector } from "./testing/models.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
@@ -19,8 +20,8 @@ let animalDetector: AnimalDetector;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
-  faceDetector = await loadFaceDetector(join(import.meta.dirname, "../../models"));
-  animalDetector = await loadAnimalDetector(join(import.meta.dirname, "../../models"));
+  faceDetector = await loadTestFaceDetector();
+  animalDetector = await loadTestAnimalDetector();
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
   // Stands in for the built UI (`dist/web`), so the test does not depend on a build.
   uiDir = await mkdtemp(join(tmpdir(), "family-photos-ui-"));

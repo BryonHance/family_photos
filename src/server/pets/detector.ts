@@ -3,7 +3,7 @@ import ort from "onnxruntime-node";
 import sharp from "sharp";
 import type { Box, Species } from "../../shared/analysis.ts";
 import type { Pixels } from "../pixels.ts";
-import { verifyExportedModel, verifyPinnedModels } from "../recognition/models.ts";
+import { verifyExportedModel, verifyPinnedModels, type LoadOptions } from "../recognition/models.ts";
 
 export type DetectedAnimal = {
   species: Species;
@@ -49,16 +49,26 @@ const SCORE_THRESHOLD = 0.5;
 /**
  * Checks every downloaded pet model file against its pinned SHA-256
  * (`models.sha256`, shared with `scripts/fetch-pet-models.sh`) and the exported
- * Avito model against the SHA-256 recorded beside it, then loads D-FINE-S and
- * the Avito model to run on the CPU. Throws a ModelError naming `pixi run models` when a file is missing or corrupt.
+ * Avito model against the SHA-256 recorded beside it. Throws a ModelError
+ * naming `pixi run models` when a file is missing or corrupt.
  */
-export async function loadAnimalDetector(modelsDir: string): Promise<AnimalDetector> {
+export async function verifyAnimalModels(modelsDir: string) {
   const petModelsDir = join(modelsDir, PET_MODELS_SUBDIR);
   await verifyPinnedModels("Pet", join(import.meta.dirname, "models.sha256"), petModelsDir);
   await verifyExportedModel("Pet", join(petModelsDir, EMBEDDING_FILE));
+}
+
+/** Checks the pet models, then loads D-FINE-S and the Avito model to run on the CPU. */
+export async function loadAnimalDetector(
+  modelsDir: string,
+  { verify = true, threads }: LoadOptions = {},
+): Promise<AnimalDetector> {
+  const petModelsDir = join(modelsDir, PET_MODELS_SUBDIR);
+  if (verify) await verifyAnimalModels(modelsDir);
   const load = (file: string) =>
     ort.InferenceSession.create(join(petModelsDir, file), {
       executionProviders: ["cpu"],
+      ...(threads !== undefined && { intraOpNumThreads: threads }),
       // Idle threads sleep instead of spinning, so that the pet models do not
       // starve other work on the server (or other test files running beside it).
       extra: { session: { intra_op: { allow_spinning: "0" } } },

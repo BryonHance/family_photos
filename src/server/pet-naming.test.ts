@@ -1,9 +1,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import type { AnimalDetector } from "./pets/detector.ts";
-import { modelsDir, openApi, type Api } from "./testing/api.ts";
+import { openApi, type Api } from "./testing/api.ts";
+import { loadTestFaceDetector } from "./testing/models.ts";
 
 // These tests run the real buffalo_sc, D-FINE-S and Avito models: fetch them with `pixi run models`.
 // cat-and-dog.jpg shows two Animals, left to right: a cat and a dog. cat.jpg shows the same cat alone.
@@ -15,7 +16,7 @@ let api: Api;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
-  faceDetector = await loadFaceDetector(modelsDir);
+  faceDetector = await loadTestFaceDetector();
 });
 
 afterAll(async () => {

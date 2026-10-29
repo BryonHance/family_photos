@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { ExifTool } from "exiftool-vendored";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
-import { fixture, modelsDir, openApi, type Api } from "./testing/api.ts";
+import type { FaceDetector } from "./faces/detector.ts";
+import { fixture, openApi, type Api } from "./testing/api.ts";
+import { loadTestFaceDetector } from "./testing/models.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
 // crew.jpg shows three Faces, left to right: Armstrong, Collins, Aldrin.
@@ -17,7 +18,7 @@ let api: Api;
 
 beforeAll(async () => {
   exiftool = new ExifTool();
-  faceDetector = await loadFaceDetector(modelsDir);
+  faceDetector = await loadTestFaceDetector();
 });
 
 afterAll(async () => {

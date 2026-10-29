@@ -6,13 +6,13 @@ import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Analysis } from "../shared/analysis.ts";
 import { createApp } from "./app.ts";
-import { loadFaceDetector, type FaceDetector } from "./faces/detector.ts";
+import type { FaceDetector } from "./faces/detector.ts";
 import { cosine } from "./recognition/similarity.ts";
 import { openFaceStore } from "./faces/store.ts";
-import { loadAnimalDetector, type AnimalDetector } from "./pets/detector.ts";
+import type { AnimalDetector } from "./pets/detector.ts";
+import { loadTestAnimalDetector, loadTestFaceDetector } from "./testing/models.ts";
 
 // These tests run the real buffalo_sc models: fetch them with `pixi run models`.
-const modelsDir = join(import.meta.dirname, "../../models");
 const fixture = (name: string) => join(import.meta.dirname, "../../fixtures", name);
 
 let exiftool: ExifTool;
@@ -23,8 +23,8 @@ let animalDetector: AnimalDetector;
 beforeAll(async () => {
   exiftool = new ExifTool();
   tempDir = await mkdtemp(join(tmpdir(), "family-photos-test-"));
-  faceDetector = await loadFaceDetector(modelsDir);
-  animalDetector = await loadAnimalDetector(modelsDir);
+  faceDetector = await loadTestFaceDetector();
+  animalDetector = await loadTestAnimalDetector();
 });
 
 afterAll(async () => {
